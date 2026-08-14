@@ -8,7 +8,12 @@ let selectedMonthOffset=0;
 let selectedDate=isoToday();
 
 function load(){try{return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){return structuredClone(seed)}}
-function save(){localStorage.setItem(KEY,JSON.stringify(state));renderAll()}
+function save(){
+  localStorage.setItem(KEY,JSON.stringify(state));
+  renderAll();
+  const overlay=document.getElementById('dayOverlay');
+  if(overlay && !overlay.classList.contains('hidden')) renderDayOverlay();
+}
 function uid(p='x'){return p+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6)}
 function esc(v=''){return String(v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function isoToday(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10)}
@@ -58,6 +63,26 @@ function lessonTypeSelect(x){
     <input name="lessonTypeCustom" type="text" value="${esc(x.lessonTypeCustom||'')}" placeholder="Введіть свій варіант">
   </div>`;
 }
+const roomOptions=['325','230','324','322а','321','238'];
+function roomSelect(x){
+  const room=x.room||'';
+  const known=roomOptions.includes(room);
+  return `<div class="field"><label>Аудиторія</label>
+    <select name="roomChoice" id="roomChoiceSelect" onchange="toggleCustomRoom(this.value)">
+      <option value="">Оберіть аудиторію</option>
+      ${roomOptions.map(r=>`<option ${r===room?'selected':''}>${r}</option>`).join('')}
+      <option value="Інше" ${room && !known?'selected':''}>Інше</option>
+    </select>
+  </div>
+  <div class="field ${room && !known?'':'hidden'}" id="customRoomField">
+    <label>Своя аудиторія / місце</label>
+    <input name="roomCustom" type="text" value="${esc(room && !known?room:'')}" placeholder="Введіть свій варіант">
+  </div>`;
+}
+function toggleCustomRoom(value){
+  const f=document.getElementById('customRoomField');
+  if(f) f.classList.toggle('hidden',value!=='Інше');
+}
 function applyLessonSlot(value){
   const start=document.querySelector('[name="time"]');
   const end=document.querySelector('[name="end"]');
@@ -94,18 +119,21 @@ function setPlannerMonth(offset){
   if(!selected || selected.getFullYear()!==base.getFullYear() || selected.getMonth()!==base.getMonth()){
     selectedDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}-01`;
   }
-  renderHome(); renderYearPage();
+  renderHome();
 }
 function stepPlannerMonth(delta){ setPlannerMonth(selectedMonthOffset + Number(delta)); }
 function openDay(iso){
   selectedDate=iso;
   selectedMonthOffset=monthOffsetForDate(iso);
-  renderHome(); renderYearPage();
+  renderHome();
+  renderDayOverlay();
+  document.getElementById('dayOverlay').classList.remove('hidden');
 }
 function getItemsForDate(iso){
   return [
     ...state.classes.filter(x=>x.date===iso).map((x,i)=>({
       kind:'class',
+      id:x.id,
       time:x.time||'—',
       end:x.end||'',
       title:x.subject||'Заняття',
@@ -115,6 +143,7 @@ function getItemsForDate(iso){
     })),
     ...state.tasks.filter(x=>!x.done && x.date===iso).map((x,i)=>({
       kind:'task',
+      id:x.id,
       time:x.time||'—',
       end:'',
       title:x.title,
@@ -124,6 +153,7 @@ function getItemsForDate(iso){
     })),
     ...state.projects.filter(x=>x.status!=='Завершено' && x.deadline===iso).map((x,i)=>({
       kind:'project',
+      id:x.id,
       time:'—',
       end:'',
       title:x.title,
@@ -197,30 +227,75 @@ function renderMonthPlanner(){
     </div>
   </div>`;
 }
-function renderSelectedDayCard(){
+function closeDayOverlay(){
+  document.getElementById('dayOverlay').classList.add('hidden');
+}
+function moveSelectedDay(delta){
+  const d=dateObj(selectedDate)||new Date();
+  d.setDate(d.getDate()+Number(delta));
+  selectedDate=isoLocal(d);
+  selectedMonthOffset=monthOffsetForDate(selectedDate);
+  renderHome();
+  renderDayOverlay();
+}
+function openAddForDate(type,iso){
+  const preset=type==='project'?{deadline:iso}:{date:iso};
+  openModal();
+  showForm(type,preset);
+}
+function dayEdit(type,id){
+  editEntry(type,id);
+}
+function renderDayOverlay(){
   const d=dateObj(selectedDate);
-  if(!d) return '';
+  if(!d)return;
   const items=getItemsForDate(selectedDate);
-  return `<div class="card day-detail-card">
-    <div class="day-detail-top">
+  const counts={
+    classes:items.filter(x=>x.kind==='class').length,
+    tasks:items.filter(x=>x.kind==='task').length,
+    projects:items.filter(x=>x.kind==='project').length
+  };
+  const html=`
+    <div class="day-screen-head">
       <div>
-        <h3 class="day-detail-title">${weekdays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}</h3>
-        <div class="day-detail-sub">Окремий день — усі події, заняття, справи й дедлайни на цю дату</div>
+        <h2 class="day-screen-date">${weekdays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}</h2>
+        <div class="day-screen-meta">Усе, що заплановано на цей день. Тут можна одразу відкрити й відредагувати кожен запис.</div>
       </div>
-      <div class="day-detail-actions">
-        <button onclick="openAdd('class')">＋ Заняття</button>
-        <button onclick="openAdd('task')">＋ Справа</button>
+      <div class="day-screen-controls">
+        <button onclick="moveSelectedDay(-1)">← День</button>
+        <button onclick="moveSelectedDay(1)">День →</button>
+        <button class="day-close" onclick="closeDayOverlay()">×</button>
       </div>
     </div>
-    <div class="day-detail-body">
-      ${items.length?`<div class="day-detail-list">${items.map(x=>`
-        <div class="day-item">
-          <div class="day-time">${esc(x.time)}${x.end?`<small>до ${esc(x.end)}</small>`:''}</div>
-          <span class="kind-pill ${x.kind}">${x.kind==='class'?'ЗАНЯТТЯ':x.kind==='task'?'СПРАВА':'ПРОЄКТ'}</span>
-          <div class="day-main"><b>${esc(x.title)}</b><small>${esc(x.sub||'')}${x.note?`<br>${esc(x.note)}`:''}</small></div>
-        </div>`).join('')}</div>`:`<div class="day-empty">На цей день поки нічого не заплановано.</div>`}
-    </div>
-  </div>`;
+    <div class="day-screen-body">
+      <div class="day-summary">
+        <div class="day-summary-card"><small>ЗАНЯТТЯ</small><b>${counts.classes}</b></div>
+        <div class="day-summary-card"><small>СПРАВИ</small><b>${counts.tasks}</b></div>
+        <div class="day-summary-card"><small>ДЕДЛАЙНИ ПРОЄКТІВ</small><b>${counts.projects}</b></div>
+      </div>
+
+      <div class="day-addbar">
+        <button class="add-class" onclick="openAddForDate('class','${selectedDate}')">＋ Заняття</button>
+        <button class="add-task" onclick="openAddForDate('task','${selectedDate}')">＋ Справа</button>
+        <button class="add-project" onclick="openAddForDate('project','${selectedDate}')">＋ Проєкт</button>
+      </div>
+
+      ${items.length?`<div class="day-records">${items.map(x=>`
+        <div class="day-record">
+          <div class="day-record-time">${esc(x.time)}${x.end?`<small>до ${esc(x.end)}</small>`:''}</div>
+          <div class="day-record-kind ${x.kind}">${x.kind==='class'?'ЗАНЯТТЯ':x.kind==='task'?'СПРАВА':'ПРОЄКТ'}</div>
+          <div class="day-record-main">
+            <b>${esc(x.title)}</b>
+            <small>${esc(x.sub||'')}${x.note?`<br>${esc(x.note)}`:''}</small>
+          </div>
+          <div class="day-record-actions">
+            <button title="Редагувати" onclick="dayEdit('${x.kind}','${x.id}')">✎</button>
+            <button title="Видалити" onclick="deleteEntry('${x.kind}','${x.id}'); renderDayOverlay()">×</button>
+          </div>
+        </div>`).join('')}</div>`:
+        `<div class="day-no-records">На цей день поки нічого не заплановано. Додай заняття, справу або дедлайн проєкту кнопками вище.</div>`}
+    </div>`;
+  document.getElementById('dayScreenContent').innerHTML=html;
 }
 
 function headerDate(){
@@ -230,7 +305,6 @@ function headerDate(){
 function renderAll(){
   headerDate();
   renderHome();
-  renderYearPage();
   renderWeek();
   renderClasses();
   renderTasks();
@@ -278,7 +352,7 @@ function renderHome(){
       <div class="card">
         <div class="card-head">
           <div class="card-title"><span class="icon">▣</span>НАЙБЛИЖЧЕ</div>
-          <button class="card-link" onclick="switchView('tasks')">Усі події →</button>
+          <button class="card-link" onclick="switchView('week')">Мій тиждень →</button>
         </div>
         <div class="card-body">
           ${upcoming.length?`<div class="upcoming-list">${upcoming.map(x=>{
@@ -301,7 +375,6 @@ function renderHome(){
       ${renderMonthPlanner()}
     </div>
 
-    ${renderSelectedDayCard()}
 
     <div class="dashboard-bottom">
       <div class="card">
@@ -349,12 +422,6 @@ function renderHome(){
     </div>`;
 }
 
-function yearOptions(){ return ''; }
-function setYear(y){ currentYear=Number(y); renderHome(); renderYearPage(); }
-function changeYear(delta){ currentYear+=delta; renderHome(); renderYearPage(); }
-function eventMapForYear(year){ return {}; }
-function renderYearCalendar(year){ return ''; }
-function renderMonth(year, month, map){ return ''; }
 function tooltipForDate(iso){
   const items=[
     ...state.classes.filter(x=>x.date===iso).map(x=>`Заняття: ${x.subject||''} ${x.group?`(${x.group})`:''}`),
@@ -362,18 +429,6 @@ function tooltipForDate(iso){
     ...state.projects.filter(x=>x.status!=='Завершено' && x.deadline===iso).map(x=>`Проєкт: ${x.title}`)
   ];
   return items.join(' | ') || fmtDate(iso);
-}
-
-function renderYearPage(){
-  document.getElementById('yearView').innerHTML=`
-    <div class="card year-card">
-      <div class="card-head">
-        <div class="card-title"><span class="icon">▤</span>КАЛЕНДАР ПО МІСЯЦЯХ</div>
-        <div class="card-link">Натисни на день, щоб побачити деталі</div>
-      </div>
-      ${renderMonthPlanner()}
-    </div>
-    ${renderSelectedDayCard()}`;
 }
 
 function renderWeek(){
@@ -526,7 +581,7 @@ function formMarkup(type,x){
     ${inputField('time','Час початку','time',x.time)}
     ${inputField('end','Час завершення','time',x.end)}
     ${lessonTypeSelect(x)}
-    ${inputField('room','Аудиторія / місце','text',x.room,'324')}
+    ${roomSelect(x)}
     ${inputField('location','Уточнення місця','text',x.location,'КНУКіМ / онлайн')}
     ${selectField('status','Статус',['Заплановано','Проведено','Перенесено','Скасовано'],x.status||'Заплановано')}
     ${inputField('topic','Тема / що робимо','text',x.topic,'',true)}
@@ -578,7 +633,12 @@ function submitEntry(e){
   const id=document.getElementById('entryId').value;
   const data=Object.fromEntries(new FormData(e.target).entries());
   delete data.lessonSlot;
-  if(type==='class' && data.lessonType!=='Інше') data.lessonTypeCustom='';
+  if(type==='class'){
+    if(data.lessonType!=='Інше') data.lessonTypeCustom='';
+    data.room=data.roomChoice==='Інше'?(data.roomCustom||''):data.roomChoice;
+    delete data.roomChoice;
+    delete data.roomCustom;
+  }
   const key=type==='class'?'classes':type==='task'?'tasks':type==='project'?'projects':'notes';
   if(type==='project')data.progress=Math.max(0,Math.min(100,Number(data.progress)||0));
   if(type==='task'&&!id)data.done=false;
@@ -612,6 +672,7 @@ document.getElementById('fab').addEventListener('click',openModal);
 document.getElementById('closeModal').addEventListener('click',closeModal);
 document.getElementById('cancelBtn').addEventListener('click',closeModal);
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
+document.getElementById('dayOverlay').addEventListener('click',e=>{if(e.target.id==='dayOverlay')closeDayOverlay()});
 document.querySelectorAll('#typeGrid [data-type]').forEach(b=>b.addEventListener('click',()=>showForm(b.dataset.type)));
 document.getElementById('entryForm').addEventListener('submit',submitEntry);
 document.getElementById('searchBtn').addEventListener('click',()=>document.getElementById('searchBox').classList.toggle('hidden'));

@@ -22,7 +22,6 @@
 
     <nav class="side-nav">
       <button class="nav-btn active" data-view="home"><span>⌂</span>Головна</button>
-      <button class="nav-btn" data-view="year"><span>▤</span>Календар</button>
       <button class="nav-btn" data-view="week"><span>▦</span>Мій тиждень</button>
       <button class="nav-btn" data-view="classes"><span>◫</span>Заняття</button>
       <button class="nav-btn" data-view="tasks"><span>✓</span>Справи</button>
@@ -52,7 +51,6 @@
       </div>
       <div class="top-actions">
         <button class="circle-btn" id="searchBtn">⌕</button>
-        <button class="circle-btn">♢</button>
         <button class="avatar-btn">Ф</button>
       </div>
     </header>
@@ -63,7 +61,6 @@
     </div>
 
     <section id="homeView" class="view active"></section>
-    <section id="yearView" class="view"></section>
     <section id="weekView" class="view"></section>
     <section id="classesView" class="view"></section>
     <section id="tasksView" class="view"></section>
@@ -73,13 +70,19 @@
 
   <nav class="mobile-nav">
     <button class="mobile-btn active" data-view="home"><span>⌂</span><small>Головна</small></button>
-    <button class="mobile-btn" data-view="year"><span>▤</span><small>Календар</small></button>
     <button class="mobile-btn" data-view="classes"><span>◫</span><small>Заняття</small></button>
     <button class="mobile-btn" data-view="tasks"><span>✓</span><small>Справи</small></button>
     <button class="mobile-btn" data-view="projects"><span>▣</span><small>Проєкти</small></button>
   </nav>
 
   <button class="fab" id="fab">＋</button>
+</div>
+
+
+<div class="day-overlay hidden" id="dayOverlay">
+  <div class="day-screen">
+    <div id="dayScreenContent"></div>
+  </div>
 </div>
 
 <div class="modal-backdrop hidden" id="modal">
