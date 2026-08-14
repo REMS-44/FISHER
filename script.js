@@ -1,9 +1,11 @@
 
-const KEY='fisher-control-v3';
+const KEY='fisher-control-v4';
 
 const seed={classes:[],tasks:[],projects:[],notes:[]};
 const state=load();
 let currentYear=(new Date()).getFullYear();
+let selectedMonthOffset=0;
+let selectedDate=isoToday();
 
 function load(){try{return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){return structuredClone(seed)}}
 function save(){localStorage.setItem(KEY,JSON.stringify(state));renderAll()}
@@ -72,6 +74,155 @@ function todayClasses(){return state.classes.filter(x=>x.date===isoToday()).sort
 function openTasks(){return state.tasks.filter(x=>!x.done)}
 function activeProjects(){return state.projects.filter(x=>x.status!=='Завершено')}
 
+function pluralEvents(n){
+  if(n%10===1 && n%100!==11) return `${n} подія`;
+  if([2,3,4].includes(n%10) && ![12,13,14].includes(n%100)) return `${n} події`;
+  return `${n} подій`;
+}
+function monthCursor(offset=selectedMonthOffset){
+  const now=new Date();
+  return new Date(now.getFullYear(), now.getMonth()+offset, 1);
+}
+function monthOffsetForDate(iso){
+  const d=dateObj(iso); const now=new Date();
+  return (d.getFullYear()-now.getFullYear())*12 + (d.getMonth()-now.getMonth());
+}
+function setPlannerMonth(offset){
+  selectedMonthOffset=Number(offset);
+  const base=monthCursor(selectedMonthOffset);
+  const selected=dateObj(selectedDate);
+  if(!selected || selected.getFullYear()!==base.getFullYear() || selected.getMonth()!==base.getMonth()){
+    selectedDate=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}-01`;
+  }
+  renderHome(); renderYearPage();
+}
+function stepPlannerMonth(delta){ setPlannerMonth(selectedMonthOffset + Number(delta)); }
+function openDay(iso){
+  selectedDate=iso;
+  selectedMonthOffset=monthOffsetForDate(iso);
+  renderHome(); renderYearPage();
+}
+function getItemsForDate(iso){
+  return [
+    ...state.classes.filter(x=>x.date===iso).map((x,i)=>({
+      kind:'class',
+      time:x.time||'—',
+      end:x.end||'',
+      title:x.subject||'Заняття',
+      sub:[x.group, lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x), x.room&&`ауд. ${x.room}`, x.location].filter(Boolean).join(' · '),
+      note:x.topic||x.prep||'',
+      color:typeColor(i)
+    })),
+    ...state.tasks.filter(x=>!x.done && x.date===iso).map((x,i)=>({
+      kind:'task',
+      time:x.time||'—',
+      end:'',
+      title:x.title,
+      sub:[x.category, x.project].filter(Boolean).join(' · '),
+      note:x.notes||'',
+      color:typeColor(i+2)
+    })),
+    ...state.projects.filter(x=>x.status!=='Завершено' && x.deadline===iso).map((x,i)=>({
+      kind:'project',
+      time:'—',
+      end:'',
+      title:x.title,
+      sub:[x.category, x.status&&`статус: ${x.status}`].filter(Boolean).join(' · '),
+      note:x.next||x.notes||'',
+      color:'green'
+    }))
+  ].sort((a,b)=>(a.time||'99:99').localeCompare(b.time||'99:99'));
+}
+function renderMonthTabs(){
+  return `<div class="planner-tabs">${
+    Array.from({length:12},(_,i)=>{
+      const d=monthCursor(i);
+      return `<button class="planner-tab ${i===selectedMonthOffset?'active':''}" onclick="setPlannerMonth(${i})">${monthsNom[d.getMonth()]} ${d.getFullYear()}</button>`;
+    }).join('')
+  }</div>`;
+}
+function renderMonthPlanner(){
+  const base=monthCursor(selectedMonthOffset);
+  const year=base.getFullYear(), month=base.getMonth();
+  const first=new Date(year,month,1);
+  const start=new Date(first);
+  start.setDate(first.getDate()-((first.getDay()+6)%7));
+
+  let cells='';
+  for(let i=0;i<42;i++){
+    const d=new Date(start); d.setDate(start.getDate()+i);
+    const iso=isoLocal(d);
+    const items=getItemsForDate(iso);
+    const inMonth=d.getMonth()===month;
+    const counts={
+      class: items.filter(x=>x.kind==='class').length,
+      task: items.filter(x=>x.kind==='task').length,
+      project: items.filter(x=>x.kind==='project').length
+    };
+    const cls=['month-cell'];
+    if(!inMonth) cls.push('muted');
+    if(iso===isoToday()) cls.push('today');
+    if(iso===selectedDate) cls.push('active');
+    if(items.length) cls.push('has-items');
+
+    cells += `<button type="button" class="${cls.join(' ')}" onclick="openDay('${iso}')" title="${tooltipForDate(iso)}">
+      <div class="month-num">${d.getDate()}</div>
+      <div class="month-meta ${items.length?'':'empty'}">${items.length?pluralEvents(items.length):'—'}</div>
+      <div class="month-submeta">${counts.class?`${counts.class} зан.`:''}${counts.class&&counts.task?' · ':''}${counts.task?`${counts.task} спр.`:''}${(counts.class||counts.task)&&(counts.project)?' · ':''}${counts.project?`${counts.project} проєкт.`:''}</div>
+      <div class="month-markers">
+        ${counts.class?'<span class="m-dot class"></span>':''}
+        ${counts.task?'<span class="m-dot task"></span>':''}
+        ${counts.project?'<span class="m-dot project"></span>':''}
+      </div>
+    </button>`;
+  }
+
+  return `<div class="planner-shell">
+    ${renderMonthTabs()}
+    <div class="planner-headline">
+      <div>
+        <div class="planner-label">${monthsNom[month]} ${year}</div>
+        <div class="planner-subhint">Натисни на день, щоб побачити все, що там є</div>
+      </div>
+      <div class="planner-nav">
+        <button onclick="stepPlannerMonth(-1)">← Попередній</button>
+        <button onclick="stepPlannerMonth(1)">Наступний →</button>
+      </div>
+    </div>
+    <div class="planner-scroll">
+      <div class="planner-grid">
+        <div class="planner-weekdays">${weekShort.map(d=>`<div>${d}</div>`).join('')}</div>
+        <div class="planner-cells">${cells}</div>
+      </div>
+    </div>
+  </div>`;
+}
+function renderSelectedDayCard(){
+  const d=dateObj(selectedDate);
+  if(!d) return '';
+  const items=getItemsForDate(selectedDate);
+  return `<div class="card day-detail-card">
+    <div class="day-detail-top">
+      <div>
+        <h3 class="day-detail-title">${weekdays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}</h3>
+        <div class="day-detail-sub">Окремий день — усі події, заняття, справи й дедлайни на цю дату</div>
+      </div>
+      <div class="day-detail-actions">
+        <button onclick="openAdd('class')">＋ Заняття</button>
+        <button onclick="openAdd('task')">＋ Справа</button>
+      </div>
+    </div>
+    <div class="day-detail-body">
+      ${items.length?`<div class="day-detail-list">${items.map(x=>`
+        <div class="day-item">
+          <div class="day-time">${esc(x.time)}${x.end?`<small>до ${esc(x.end)}</small>`:''}</div>
+          <span class="kind-pill ${x.kind}">${x.kind==='class'?'ЗАНЯТТЯ':x.kind==='task'?'СПРАВА':'ПРОЄКТ'}</span>
+          <div class="day-main"><b>${esc(x.title)}</b><small>${esc(x.sub||'')}${x.note?`<br>${esc(x.note)}`:''}</small></div>
+        </div>`).join('')}</div>`:`<div class="day-empty">На цей день поки нічого не заплановано.</div>`}
+    </div>
+  </div>`;
+}
+
 function headerDate(){
   const d=new Date();
   document.getElementById('todayLabel').textContent=`${weekdays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
@@ -97,7 +248,7 @@ function renderHome(){
 
   const upcoming=[
     ...openTasks().filter(x=>x.date && x.date>=isoToday()).map(x=>({date:x.date,title:x.title,sub:x.category||'',time:x.time||''})),
-    ...state.classes.filter(x=>x.date>isoToday()).map(x=>({date:x.date,title:x.subject||'Заняття',sub:x.group||'',time:x.time||''}))
+    ...state.classes.filter(x=>x.date>isoToday()).map(x=>({date:x.date,title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x)].filter(Boolean).join(' · '),time:x.time||''}))
   ].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,6);
 
   const classesNext=[...state.classes].filter(x=>x.date>=isoToday()).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,5);
@@ -144,17 +295,13 @@ function renderHome(){
 
     <div class="card year-card">
       <div class="card-head">
-        <div class="card-title"><span class="icon">▤</span>КАЛЕНДАР НА РІК</div>
-        <div class="year-toolbar">
-          <button onclick="changeYear(-1)">←</button>
-          <select id="yearSelect" onchange="setYear(this.value)">
-            ${yearOptions()}
-          </select>
-          <button onclick="changeYear(1)">→</button>
-        </div>
+        <div class="card-title"><span class="icon">▤</span>КАЛЕНДАР ПО МІСЯЦЯХ</div>
+        <button class="card-link" onclick="switchView('year')">Відкрити календар окремо →</button>
       </div>
-      ${renderYearCalendar(currentYear)}
+      ${renderMonthPlanner()}
     </div>
+
+    ${renderSelectedDayCard()}
 
     <div class="dashboard-bottom">
       <div class="card">
@@ -202,59 +349,12 @@ function renderHome(){
     </div>`;
 }
 
-function yearOptions(){
-  const start=(new Date()).getFullYear()-2;
-  return Array.from({length:7},(_,i)=>start+i).map(y=>`<option ${y===currentYear?'selected':''}>${y}</option>`).join('');
-}
-function setYear(y){currentYear=Number(y); renderHome(); renderYearPage();}
-function changeYear(delta){currentYear+=delta; renderHome(); renderYearPage();}
-
-function eventMapForYear(year){
-  const map={};
-  state.classes.forEach(x=>{if(x.date?.startsWith(String(year))) {map[x.date]=map[x.date]||new Set(); map[x.date].add('class');}});
-  state.tasks.filter(x=>!x.done).forEach(x=>{if(x.date?.startsWith(String(year))) {map[x.date]=map[x.date]||new Set(); map[x.date].add('task');}});
-  state.projects.filter(x=>x.status!=='Завершено').forEach(x=>{if(x.deadline?.startsWith(String(year))) {map[x.deadline]=map[x.deadline]||new Set(); map[x.deadline].add('project');}});
-  return map;
-}
-
-function renderYearCalendar(year){
-  const map=eventMapForYear(year);
-  let html=`<div class="year-grid">`;
-  for(let m=0;m<12;m++){
-    html+=renderMonth(year,m,map);
-  }
-  html+=`</div>
-    <div class="calendar-legend">
-      <div class="legend-item"><span class="legend-swatch s-class"></span> заняття</div>
-      <div class="legend-item"><span class="legend-swatch s-task"></span> справи</div>
-      <div class="legend-item"><span class="legend-swatch s-project"></span> дедлайни проєктів</div>
-      <div class="legend-item"><span class="legend-swatch s-today"></span> сьогодні</div>
-    </div>`;
-  return html;
-}
-
-function renderMonth(year, month, map){
-  const first=new Date(year,month,1);
-  const lastDay=new Date(year,month+1,0).getDate();
-  const startOffset=(first.getDay()+6)%7;
-  let days=`<div class="month-card"><div class="month-head"><b>${monthsNom[month]}</b><small>${year}</small></div>
-    <div class="month-weekdays">${weekShort.map(d=>`<span>${d}</span>`).join('')}</div>
-    <div class="month-days">`;
-  for(let i=0;i<startOffset;i++) days+=`<div class="day empty"></div>`;
-  for(let d=1;d<=lastDay;d++){
-    const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const ev=map[iso]?[...map[iso]]:[];
-    let cls='';
-    if(ev.length>1) cls='multi';
-    else if(ev.includes('class')) cls='has-class';
-    else if(ev.includes('task')) cls='has-task';
-    else if(ev.includes('project')) cls='has-project';
-    if(iso===isoToday()) cls=(cls?cls+' ':'')+'today';
-    days+=`<div class="day ${cls}" title="${tooltipForDate(iso)}">${d}${ev.length?`<span class="dot"></span>`:''}</div>`;
-  }
-  days+='</div></div>';
-  return days;
-}
+function yearOptions(){ return ''; }
+function setYear(y){ currentYear=Number(y); renderHome(); renderYearPage(); }
+function changeYear(delta){ currentYear+=delta; renderHome(); renderYearPage(); }
+function eventMapForYear(year){ return {}; }
+function renderYearCalendar(year){ return ''; }
+function renderMonth(year, month, map){ return ''; }
 function tooltipForDate(iso){
   const items=[
     ...state.classes.filter(x=>x.date===iso).map(x=>`Заняття: ${x.subject||''} ${x.group?`(${x.group})`:''}`),
@@ -268,15 +368,12 @@ function renderYearPage(){
   document.getElementById('yearView').innerHTML=`
     <div class="card year-card">
       <div class="card-head">
-        <div class="card-title"><span class="icon">▤</span>РІЧНИЙ КАЛЕНДАР</div>
-        <div class="year-toolbar">
-          <button onclick="changeYear(-1)">←</button>
-          <select onchange="setYear(this.value)">${yearOptions()}</select>
-          <button onclick="changeYear(1)">→</button>
-        </div>
+        <div class="card-title"><span class="icon">▤</span>КАЛЕНДАР ПО МІСЯЦЯХ</div>
+        <div class="card-link">Натисни на день, щоб побачити деталі</div>
       </div>
-      ${renderYearCalendar(currentYear)}
-    </div>`;
+      ${renderMonthPlanner()}
+    </div>
+    ${renderSelectedDayCard()}`;
 }
 
 function renderWeek(){
