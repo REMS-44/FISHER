@@ -1020,50 +1020,7 @@ function renderHome(){
     </div>
 
 
-    <div class="dashboard-bottom">
-      <div class="card">
-        <div class="card-head"><div class="card-title"><span class="icon">◫</span>ЗАНЯТТЯ</div><button class="card-link" onclick="switchView('classes')">Всі заняття →</button></div>
-        <div class="card-body">
-          ${classesNext.length?`<table class="mini-table"><thead><tr><th>Дата</th><th>Час</th><th>Дисципліна</th><th>Група</th><th>Ауд.</th></tr></thead><tbody>
-            ${classesNext.map(x=>`<tr><td>${fmtShort(x.date)}</td><td class="blue-text">${esc(x.time||'—')}</td><td>${esc(x.subject||'—')}</td><td>${esc(x.group||'—')}</td><td>${esc(x.room||'—')}</td></tr>`).join('')}
-          </tbody></table>`:`<div class="empty-state">Занять ще немає.</div>`}
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head"><div class="card-title"><span class="icon">✓</span>СПРАВИ</div><button class="card-link" onclick="switchView('tasks')">Всі справи →</button></div>
-        <div class="card-body">
-          ${tasksNext.length?tasksNext.map(x=>`
-            <div class="task-row ${x.done?'done':''}">
-              <button class="check ${x.done?'done':''}" onclick="toggleTask('${x.id}')">${x.done?'✓':''}</button>
-              <div class="task-name">${esc(x.title)}</div>
-              <span class="priority ${priorityClass(x.priority)}">${esc((x.priority||'Середній').toUpperCase())}</span>
-              <span class="task-date">${x.date?fmtShort(x.date):'—'}</span>
-            </div>`).join(''):`<div class="empty-state">Справ ще немає.</div>`}
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head"><div class="card-title"><span class="icon">▣</span>ПРОЄКТИ</div><button class="card-link" onclick="switchView('projects')">Всі проєкти →</button></div>
-        <div class="card-body">
-          ${projects.length?projects.map(x=>`
-            <div class="project-row">
-              <div class="project-icon">${esc((x.title||'П')[0].toUpperCase())}</div>
-              <div class="project-name"><b>${esc(x.title)}</b><small>${esc(x.category||'Проєкт')}</small></div>
-              <div class="progress"><span style="width:${Number(x.progress)||0}%"></span></div>
-              <div class="progress-num">${Number(x.progress)||0}%</div>
-            </div>`).join(''):`<div class="empty-state">Проєктів ще немає.</div>`}
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-head"><div class="card-title"><span class="icon">✎</span>ШВИДКІ НОТАТКИ</div><button class="card-link" onclick="openAdd('note')">＋</button></div>
-      <div class="notes-strip">
-        ${notes.map(x=>`<div class="quick-note"><b>${esc(x.title||'Нотатка')}</b><br>${esc((x.text||'').slice(0,100))}</div>`).join('')}
-        <button class="quick-note add" onclick="openAdd('note')">＋ Нова нотатка</button>
-      </div>
-    </div>`;
+`;
 }
 
 function tooltipForDate(iso){
