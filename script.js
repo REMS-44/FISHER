@@ -413,6 +413,10 @@ function toggleManualDate(iso){
   }else{
     recurrenceDraftDates.add(iso);
   }
+
+  const previewField=document.getElementById('occurrencePreviewField');
+  if(previewField)previewField.classList.remove('hidden');
+
   renderManualDatePicker();
   renderOccurrencePreview();
 }
@@ -452,19 +456,27 @@ function renderOccurrencePreview(){
   if(!host)return;
 
   const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
-  const dates=generatedRecurrenceDates(mode);
+  const manualField=document.getElementById('manualDatesField');
+  const manualModeActive=manualField && !manualField.classList.contains('hidden');
+
+  let dates;
+  if(mode==='selected' || manualModeActive){
+    dates=[...recurrenceDraftDates].sort();
+  }else{
+    dates=generatedRecurrenceDates(mode);
+  }
 
   if(!dates.length){
     host.innerHTML=`<div class="occurrence-empty">
-      <b>${mode==='selected'?'Ще немає обраних дат':'Серія ще не сформована'}</b>
-      <small>${mode==='selected'?'Поверніться до кроку 1 і натисніть на потрібні числа в календарі.':'Вкажіть дату «Повторювати до», і список занять з’явиться тут автоматично.'}</small>
+      <b>${(mode==='selected'||manualModeActive)?'Ще немає обраних дат':'Серія ще не сформована'}</b>
+      <small>${(mode==='selected'||manualModeActive)?'Натисніть на потрібні числа в календарі у кроці 1. Щойно дата буде вибрана, вона одразу з’явиться тут.':'Вкажіть дату «Повторювати до», і список занять з’явиться тут автоматично.'}</small>
     </div>`;
     return;
   }
 
   const summary=`<div class="occurrence-summary">
     <b>До серії увійде: ${dates.filter(d=>!recurrenceExcludedDates.has(d)).length} із ${dates.length}</b>
-    <small>Зніміть галочку біля дати, якщо саме цього дня заняття не буде.</small>
+    <small>Обрані у календарі дати вже синхронізовані з цим списком. Зніміть галочку біля дати, якщо саме цього дня заняття не буде.</small>
   </div>`;
 
   host.innerHTML=summary+dates.map(date=>{
@@ -516,12 +528,27 @@ function renderOccurrencePreview(){
 
 function refreshRecurrenceUI(){
   const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
-  if(mode==='selected')renderManualDatePicker();
+
+  if(mode==='selected'){
+    renderManualDatePicker();
+    const previewField=document.getElementById('occurrencePreviewField');
+    if(previewField)previewField.classList.remove('hidden');
+    renderOccurrencePreview();
+    return;
+  }
+
   if(mode!=='none')renderOccurrencePreview();
 }
 
 function buildFlexibleOccurrences(data,mode,repeatUntil){
-  const dates=generatedRecurrenceDates(mode).filter(d=>!recurrenceExcludedDates.has(d));
+  const manualField=document.getElementById('manualDatesField');
+  const manualModeActive=manualField && !manualField.classList.contains('hidden');
+
+  const sourceDates=(mode==='selected' || manualModeActive)
+    ? [...recurrenceDraftDates].sort()
+    : generatedRecurrenceDates(mode);
+
+  const dates=sourceDates.filter(d=>!recurrenceExcludedDates.has(d));
   if(!dates.length)return [];
 
   const seriesId=uid('series');

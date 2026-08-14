@@ -1553,3 +1553,19 @@ button{cursor:pointer}
   font-size:9px;
   line-height:1.45;
 }
+
+
+/* v14 — stronger visual connection between selected dates and exceptions */
+.occurrence-preview:not(:empty){
+  position:relative;
+}
+.occurrence-summary{
+  box-shadow:inset 3px 0 0 #6aaa84;
+}
+.occurrence-row{
+  transition:.15s ease;
+}
+.occurrence-row:hover{
+  border-color:#ccd8e5;
+  box-shadow:0 3px 10px rgba(28,40,55,.04);
+}
