@@ -966,10 +966,6 @@ function renderHome(){
     ...state.classes.filter(x=>x.date>isoToday()).map(x=>({date:x.date,title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x)].filter(Boolean).join(' · '),time:x.time||''}))
   ].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,6);
 
-  const classesNext=[...state.classes].filter(x=>x.date>=isoToday()).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,5);
-  const tasksNext=[...openTasks()].sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999')).slice(0,5);
-  const projects=activeProjects().slice(0,4);
-  const notes=[...state.notes].sort((a,b)=>(b.updated||'').localeCompare(a.updated||'')).slice(0,3);
 
   document.getElementById('homeView').innerHTML=`
     <div class="dashboard-top">
