@@ -191,8 +191,12 @@ function renderMonthPlanner(){
       .filter(x=>x.date===iso && x.status!=='Скасовано')
       .sort((a,b)=>(a.time||'').localeCompare(b.time||''));
 
-    const dayTasks=state.tasks.filter(x=>!x.done && x.date===iso);
-    const dayProjects=state.projects.filter(x=>x.status!=='Завершено' && x.deadline===iso);
+    const dayTasks=state.tasks
+      .filter(x=>!x.done && x.date===iso)
+      .sort((a,b)=>(a.time||'99:99').localeCompare(b.time||'99:99'));
+
+    const dayProjects=state.projects
+      .filter(x=>x.status!=='Завершено' && x.deadline===iso);
 
     const total=dayClasses.length+dayTasks.length+dayProjects.length;
     const inMonth=d.getMonth()===month;
@@ -204,30 +208,45 @@ function renderMonthPlanner(){
     if(total) cls.push('has-items');
 
     const classesHtml=dayClasses.map(x=>`
-      <div class="calendar-class">
-        <div class="calendar-class-top">
-          <span class="pair-badge">${esc(pairNumber(x.time,x.end))}</span>
-          <span class="pair-time">${esc(x.time||'—')}${x.end?`–${esc(x.end)}`:''}</span>
+      <div class="cal-entry cal-class">
+        <div class="cal-entry-line">
+          <span class="cal-pair">${esc(pairNumber(x.time,x.end))}</span>
+          <span class="cal-time">${esc(x.time||'—')}${x.end?`–${esc(x.end)}`:''}</span>
         </div>
-        <div class="calendar-subject">${esc(x.subject||'Заняття')}</div>
-        <div class="calendar-class-meta">
-          <span>${esc(x.group||'—')}</span>
-          <span>${esc(lessonTypeLabel(x))}</span>
-          <span>${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</span>
-        </div>
+        <div class="cal-title">${esc(x.subject||'Заняття')}</div>
+        <div class="cal-info"><b>${esc(x.group||'—')}</b> · ${esc(lessonTypeLabel(x))} · ${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</div>
+        ${x.topic?`<div class="cal-note">${esc(x.topic)}</div>`:''}
       </div>`).join('');
 
-    const extras=[];
-    if(dayTasks.length) extras.push(`<span class="calendar-extra task">✓ ${dayTasks.length} ${dayTasks.length===1?'справа':'справи'}</span>`);
-    if(dayProjects.length) extras.push(`<span class="calendar-extra project">▣ ${dayProjects.length} ${dayProjects.length===1?'дедлайн':'дедлайни'}</span>`);
+    const tasksHtml=dayTasks.map(x=>`
+      <div class="cal-entry cal-task">
+        <div class="cal-entry-line">
+          <span class="cal-kind">СПРАВА</span>
+          ${x.time?`<span class="cal-time">${esc(x.time)}</span>`:''}
+        </div>
+        <div class="cal-title">${esc(x.title)}</div>
+        <div class="cal-info">${esc(x.category||'Без категорії')} · ${esc(x.priority||'Середній')}</div>
+        ${x.project?`<div class="cal-note">Проєкт: ${esc(x.project)}</div>`:''}
+      </div>`).join('');
+
+    const projectsHtml=dayProjects.map(x=>`
+      <div class="cal-entry cal-project">
+        <div class="cal-entry-line"><span class="cal-kind">ДЕДЛАЙН</span></div>
+        <div class="cal-title">${esc(x.title)}</div>
+        <div class="cal-info">${esc(x.category||'Проєкт')} · ${Number(x.progress)||0}%</div>
+        ${x.next?`<div class="cal-note">Далі: ${esc(x.next)}</div>`:''}
+      </div>`).join('');
 
     cells += `<button type="button" class="${cls.join(' ')}" onclick="openDay('${iso}')" title="${tooltipForDate(iso)}">
       <div class="month-cell-head">
         <div class="month-num">${d.getDate()}</div>
-        ${total?`<div class="month-total">${pluralEvents(total)}</div>`:''}
       </div>
-      <div class="calendar-classes">${classesHtml}</div>
-      ${extras.length?`<div class="calendar-extras">${extras.join('')}</div>`:''}
+      <div class="cal-day-content">
+        ${classesHtml}
+        ${tasksHtml}
+        ${projectsHtml}
+        ${!total?`<div class="cal-empty">—</div>`:''}
+      </div>
     </button>`;
   }
 
@@ -236,7 +255,7 @@ function renderMonthPlanner(){
     <div class="planner-headline">
       <div>
         <div class="planner-label">${monthsNom[month]} ${year}</div>
-        <div class="planner-subhint">У клітинці одразу видно всі заняття: номер пари, час, дисципліну, групу, вид заняття та аудиторію. Натисни на день для повного перегляду й редагування.</div>
+        <div class="planner-subhint">У календарі одразу видно все на день. Натисни на клітинку лише коли хочеш відкрити день і редагувати записи.</div>
       </div>
       <div class="planner-nav">
         <button onclick="stepPlannerMonth(-1)">← Попередній</button>
