@@ -1,44 +1,24 @@
 
-const KEY='fisher-control-v2';
+const KEY='fisher-control-v3';
 
-const seed = {
-  classes:[],
-  tasks:[],
-  projects:[],
-  notes:[]
-};
+const seed={classes:[],tasks:[],projects:[],notes:[]};
+const state=load();
+let currentYear=(new Date()).getFullYear();
 
-const state = load();
-
-function load(){
-  try{
-    return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')};
-  }catch(e){ return structuredClone(seed); }
-}
-function save(){
-  localStorage.setItem(KEY,JSON.stringify(state));
-  renderAll();
-}
+function load(){try{return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){return structuredClone(seed)}}
+function save(){localStorage.setItem(KEY,JSON.stringify(state));renderAll()}
 function uid(p='x'){return p+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6)}
 function esc(v=''){return String(v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function isoToday(){
-  const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
-  return d.toISOString().slice(0,10);
-}
-function dateObj(s){ if(!s)return null; const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); }
+function isoToday(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10)}
+function dateObj(s){if(!s)return null;const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)}
 const months=['січня','лютого','березня','квітня','травня','червня','липня','серпня','вересня','жовтня','листопада','грудня'];
+const monthsNom=['Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'];
 const weekdays=['Неділя','Понеділок','Вівторок','Середа','Четвер','Пʼятниця','Субота'];
-function fmtDate(s){
-  const d=dateObj(s); if(!d)return '—';
-  return `${d.getDate()} ${months[d.getMonth()]}`;
-}
-function fmtShort(s){
-  const d=dateObj(s); if(!d)return '—';
-  return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`;
-}
-function startOfWeek(){
-  const d=new Date(); const wd=d.getDay(); d.setDate(d.getDate()+(wd===0?-6:1-wd)); d.setHours(0,0,0,0); return d;
-}
+const weekShort=['ПН','ВТ','СР','ЧТ','ПТ','СБ','НД'];
+
+function fmtDate(s){const d=dateObj(s); if(!d)return '—'; return `${d.getDate()} ${months[d.getMonth()]}`}
+function fmtShort(s){const d=dateObj(s); if(!d)return '—'; return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`}
+function startOfWeek(){const d=new Date(); const wd=d.getDay(); d.setDate(d.getDate()+(wd===0?-6:1-wd)); d.setHours(0,0,0,0); return d;}
 function isoLocal(d){const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10)}
 function priorityClass(p){return p==='Високий'||p==='Критично'?'high':p==='Низький'?'low':'medium'}
 function typeColor(i){return ['blue','green','purple','orange','red'][i%5]}
@@ -53,6 +33,7 @@ function headerDate(){
 function renderAll(){
   headerDate();
   renderHome();
+  renderYearPage();
   renderWeek();
   renderClasses();
   renderTasks();
@@ -64,14 +45,14 @@ function renderHome(){
   const tClasses=todayClasses();
   const todayTasks=openTasks().filter(x=>x.date===isoToday());
   const timeline=[
-    ...tClasses.map((x,i)=>({kind:'class',time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),badge:'ЗАНЯТТЯ',color:typeColor(i)})),
-    ...todayTasks.map((x,i)=>({kind:'task',time:x.time||'—',title:x.title,sub:x.category||'',badge:'СПРАВА',color:typeColor(i+2)}))
+    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),badge:'ЗАНЯТТЯ',color:typeColor(i)})),
+    ...todayTasks.map((x,i)=>({time:x.time||'—',title:x.title,sub:x.category||'',badge:'СПРАВА',color:typeColor(i+2)}))
   ].sort((a,b)=>(a.time||'').localeCompare(b.time||''));
 
-  const upcoming = [
+  const upcoming=[
     ...openTasks().filter(x=>x.date && x.date>=isoToday()).map(x=>({date:x.date,title:x.title,sub:x.category||'',time:x.time||''})),
     ...state.classes.filter(x=>x.date>isoToday()).map(x=>({date:x.date,title:x.subject||'Заняття',sub:x.group||'',time:x.time||''}))
-  ].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,4);
+  ].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,6);
 
   const classesNext=[...state.classes].filter(x=>x.date>=isoToday()).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,5);
   const tasksNext=[...openTasks()].sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999')).slice(0,5);
@@ -97,12 +78,6 @@ function renderHome(){
         </div>
       </div>
 
-      <div class="stage-card">
-        <div class="stage-beam"></div>
-        <div class="stage-copy">Плануй день.<br>Створюй зміст.<br>Режисуй життя.<span>Фішер</span></div>
-        <div class="stage-chair"></div>
-      </div>
-
       <div class="card">
         <div class="card-head">
           <div class="card-title"><span class="icon">▣</span>НАЙБЛИЖЧЕ</div>
@@ -121,12 +96,18 @@ function renderHome(){
       </div>
     </div>
 
-    <div class="card week-card">
+    <div class="card year-card">
       <div class="card-head">
-        <div class="card-title"><span class="icon">▣</span>МІЙ ТИЖДЕНЬ</div>
-        <button class="card-link" onclick="switchView('week')">Відкрити повний тиждень →</button>
+        <div class="card-title"><span class="icon">▤</span>КАЛЕНДАР НА РІК</div>
+        <div class="year-toolbar">
+          <button onclick="changeYear(-1)">←</button>
+          <select id="yearSelect" onchange="setYear(this.value)">
+            ${yearOptions()}
+          </select>
+          <button onclick="changeYear(1)">→</button>
+        </div>
       </div>
-      ${homeWeek()}
+      ${renderYearCalendar(currentYear)}
     </div>
 
     <div class="dashboard-bottom">
@@ -155,7 +136,7 @@ function renderHome(){
       <div class="card">
         <div class="card-head"><div class="card-title"><span class="icon">▣</span>ПРОЄКТИ</div><button class="card-link" onclick="switchView('projects')">Всі проєкти →</button></div>
         <div class="card-body">
-          ${projects.length?projects.map((x,i)=>`
+          ${projects.length?projects.map(x=>`
             <div class="project-row">
               <div class="project-icon">${esc((x.title||'П')[0].toUpperCase())}</div>
               <div class="project-name"><b>${esc(x.title)}</b><small>${esc(x.category||'Проєкт')}</small></div>
@@ -175,21 +156,81 @@ function renderHome(){
     </div>`;
 }
 
-function homeWeek(){
-  const start=startOfWeek();
-  let out='<div class="week-strip">';
-  for(let i=0;i<7;i++){
-    const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoLocal(d);
-    const items=[
-      ...state.classes.filter(x=>x.date===iso).map((x,j)=>({t:x.time||'',txt:`${x.time||''} ${x.group||''} ${x.room?`ауд. ${x.room}`:''}`,c:typeColor(j)})),
-      ...openTasks().filter(x=>x.date===iso).map((x,j)=>({t:x.time||'99',txt:`${x.time||''} ${x.title}`,c:typeColor(j+2)}))
-    ].sort((a,b)=>a.t.localeCompare(b.t)).slice(0,3);
-    out+=`<div class="week-day ${iso===isoToday()?'today':''}">
-      <div class="week-day-head"><b>${['ПН','ВТ','СР','ЧТ','ПТ','СБ','НД'][i]}</b><span>${d.getDate()} ${months[d.getMonth()].slice(0,4)}</span></div>
-      ${items.map(x=>`<div class="week-event ${x.c}">${esc(x.txt)}</div>`).join('')}
-    </div>`;
+function yearOptions(){
+  const start=(new Date()).getFullYear()-2;
+  return Array.from({length:7},(_,i)=>start+i).map(y=>`<option ${y===currentYear?'selected':''}>${y}</option>`).join('');
+}
+function setYear(y){currentYear=Number(y); renderHome(); renderYearPage();}
+function changeYear(delta){currentYear+=delta; renderHome(); renderYearPage();}
+
+function eventMapForYear(year){
+  const map={};
+  state.classes.forEach(x=>{if(x.date?.startsWith(String(year))) {map[x.date]=map[x.date]||new Set(); map[x.date].add('class');}});
+  state.tasks.filter(x=>!x.done).forEach(x=>{if(x.date?.startsWith(String(year))) {map[x.date]=map[x.date]||new Set(); map[x.date].add('task');}});
+  state.projects.filter(x=>x.status!=='Завершено').forEach(x=>{if(x.deadline?.startsWith(String(year))) {map[x.deadline]=map[x.deadline]||new Set(); map[x.deadline].add('project');}});
+  return map;
+}
+
+function renderYearCalendar(year){
+  const map=eventMapForYear(year);
+  let html=`<div class="year-grid">`;
+  for(let m=0;m<12;m++){
+    html+=renderMonth(year,m,map);
   }
-  return out+'</div>';
+  html+=`</div>
+    <div class="calendar-legend">
+      <div class="legend-item"><span class="legend-swatch s-class"></span> заняття</div>
+      <div class="legend-item"><span class="legend-swatch s-task"></span> справи</div>
+      <div class="legend-item"><span class="legend-swatch s-project"></span> дедлайни проєктів</div>
+      <div class="legend-item"><span class="legend-swatch s-today"></span> сьогодні</div>
+    </div>`;
+  return html;
+}
+
+function renderMonth(year, month, map){
+  const first=new Date(year,month,1);
+  const lastDay=new Date(year,month+1,0).getDate();
+  const startOffset=(first.getDay()+6)%7;
+  let days=`<div class="month-card"><div class="month-head"><b>${monthsNom[month]}</b><small>${year}</small></div>
+    <div class="month-weekdays">${weekShort.map(d=>`<span>${d}</span>`).join('')}</div>
+    <div class="month-days">`;
+  for(let i=0;i<startOffset;i++) days+=`<div class="day empty"></div>`;
+  for(let d=1;d<=lastDay;d++){
+    const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const ev=map[iso]?[...map[iso]]:[];
+    let cls='';
+    if(ev.length>1) cls='multi';
+    else if(ev.includes('class')) cls='has-class';
+    else if(ev.includes('task')) cls='has-task';
+    else if(ev.includes('project')) cls='has-project';
+    if(iso===isoToday()) cls=(cls?cls+' ':'')+'today';
+    days+=`<div class="day ${cls}" title="${tooltipForDate(iso)}">${d}${ev.length?`<span class="dot"></span>`:''}</div>`;
+  }
+  days+='</div></div>';
+  return days;
+}
+function tooltipForDate(iso){
+  const items=[
+    ...state.classes.filter(x=>x.date===iso).map(x=>`Заняття: ${x.subject||''} ${x.group?`(${x.group})`:''}`),
+    ...state.tasks.filter(x=>!x.done && x.date===iso).map(x=>`Справа: ${x.title}`),
+    ...state.projects.filter(x=>x.status!=='Завершено' && x.deadline===iso).map(x=>`Проєкт: ${x.title}`)
+  ];
+  return items.join(' | ') || fmtDate(iso);
+}
+
+function renderYearPage(){
+  document.getElementById('yearView').innerHTML=`
+    <div class="card year-card">
+      <div class="card-head">
+        <div class="card-title"><span class="icon">▤</span>РІЧНИЙ КАЛЕНДАР</div>
+        <div class="year-toolbar">
+          <button onclick="changeYear(-1)">←</button>
+          <select onchange="setYear(this.value)">${yearOptions()}</select>
+          <button onclick="changeYear(1)">→</button>
+        </div>
+      </div>
+      ${renderYearCalendar(currentYear)}
+    </div>`;
 }
 
 function renderWeek(){
@@ -331,12 +372,8 @@ function showForm(type,item={}){
 function inputField(name,label,type='text',value='',placeholder='',full=false,required=false){
   return `<div class="field ${full?'full':''}"><label>${label}</label><input name="${name}" type="${type}" value="${esc(value??'')}" placeholder="${esc(placeholder)}" ${required?'required':''}></div>`;
 }
-function textareaField(name,label,value=''){
-  return `<div class="field full"><label>${label}</label><textarea name="${name}">${esc(value??'')}</textarea></div>`;
-}
-function selectField(name,label,opts,value=''){
-  return `<div class="field"><label>${label}</label><select name="${name}">${opts.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`;
-}
+function textareaField(name,label,value=''){return `<div class="field full"><label>${label}</label><textarea name="${name}">${esc(value??'')}</textarea></div>`}
+function selectField(name,label,opts,value=''){return `<div class="field"><label>${label}</label><select name="${name}">${opts.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`}
 function formMarkup(type,x){
   if(type==='class')return `<div class="form-grid">
     ${inputField('group','Група','text',x.group,'РЕМС-44',false,true)}
@@ -419,17 +456,9 @@ function doSearch(){
   state.notes.forEach(x=>{if(`${x.title} ${x.text}`.toLowerCase().includes(q))hits.push(['НОТАТКА',x.title])});
   box.innerHTML=hits.length?hits.slice(0,20).map(x=>`<div class="search-hit"><b>${x[0]}</b>${esc(x[1])}</div>`).join(''):`<div class="search-hit">Нічого не знайдено</div>`;
 }
-function toast(msg){
-  const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
-  clearTimeout(window._toast);window._toast=setTimeout(()=>t.classList.remove('show'),1700);
-}
-function exportData(){
-  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`FISHER-control-${isoToday()}.json`;a.click();URL.revokeObjectURL(a.href);
-}
-function importData(file){
-  const r=new FileReader();r.onload=()=>{try{Object.assign(state,seed,JSON.parse(r.result));save();toast('Дані імпортовано')}catch(e){alert('Не вдалося прочитати файл.')}};r.readAsText(file)
-}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(window._toast);window._toast=setTimeout(()=>t.classList.remove('show'),1700)}
+function exportData(){const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`FISHER-control-${isoToday()}.json`;a.click();URL.revokeObjectURL(a.href)}
+function importData(file){const r=new FileReader();r.onload=()=>{try{Object.assign(state,seed,JSON.parse(r.result));save();toast('Дані імпортовано')}catch(e){alert('Не вдалося прочитати файл.')}};r.readAsText(file)}
 
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
 document.getElementById('fab').addEventListener('click',openModal);
