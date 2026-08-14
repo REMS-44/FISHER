@@ -255,13 +255,13 @@ function recurrenceFields(x={}){
   </div>
 
   <div class="field full hidden" id="manualDatesField">
-    <label>Обрати дати</label>
+    <div class="series-step-title"><span>1</span><div><b>Оберіть потрібні дати</b><small>Натискайте на числа в календарі. Обрані дні стають темними. Можна перейти на інший місяць і продовжити вибір.</small></div></div>
+    <div class="selected-mode-note">У режимі «Обрати конкретні дати» серія створюється саме з дат, які ви натиснули нижче.</div>
     <div class="manual-date-picker" id="manualDatePicker"></div>
   </div>
 
   <div class="field full hidden" id="occurrencePreviewField">
-    <label>Дати серії та винятки</label>
-    <div class="occurrence-help">Тут можна для окремої дати змінити пару, вид заняття або аудиторію. Галочка ліворуч — включити / пропустити цю дату.</div>
+    <div class="series-step-title"><span>2</span><div><b>Перевірте дати та налаштуйте винятки</b><small>Усі обрані дати з'являються тут автоматично. Для окремого дня можна змінити пару, вид заняття чи аудиторію або пропустити його.</small></div></div>
     <div class="occurrence-preview" id="occurrencePreview"></div>
   </div>`;
 }
@@ -283,10 +283,6 @@ function toggleRecurrenceMode(value){
   if(manual)manual.classList.toggle('hidden',value!=='selected');
   if(preview)preview.classList.toggle('hidden',value==='none');
 
-  if(value==='selected' && recurrenceDraftDates.size===0){
-    const base=document.querySelector('[name="date"]')?.value;
-    if(base)recurrenceDraftDates.add(base);
-  }
   refreshRecurrenceUI();
 }
 
@@ -307,12 +303,12 @@ function getBaseClassDraft(){
 }
 
 function generatedRecurrenceDates(mode){
-  const base=getBaseClassDraft().date;
-  if(!base)return [];
-
   if(mode==='selected'){
     return [...recurrenceDraftDates].sort();
   }
+
+  const base=getBaseClassDraft().date;
+  if(!base)return [];
 
   if(!['weekly','biweekly'].includes(mode))return [base];
 
@@ -350,18 +346,54 @@ function renderManualDatePicker(){
     const iso=isoLocal(d);
     const inMonth=d.getMonth()===m;
     const selected=recurrenceDraftDates.has(iso);
-    cells+=`<button type="button" class="manual-date ${inMonth?'':'outside'} ${selected?'selected':''}" onclick="toggleManualDate('${iso}')">${d.getDate()}</button>`;
+    cells+=`<button type="button"
+      aria-label="${selected?'Прибрати':'Обрати'} ${fmtDate(iso)}"
+      class="manual-date ${inMonth?'':'outside'} ${selected?'selected':''}"
+      onclick="toggleManualDate('${iso}')">
+        <span>${d.getDate()}</span>
+        ${selected?'<i>✓</i>':''}
+      </button>`;
   }
+
+  const selectedDates=[...recurrenceDraftDates].sort();
+  const selectedHtml=selectedDates.length
+    ? `<div class="selected-dates-box">
+        <div class="selected-dates-head">
+          <b>Обрані дати: ${selectedDates.length}</b>
+          <button type="button" onclick="clearManualDates()">Очистити всі</button>
+        </div>
+        <div class="selected-date-chips">
+          ${selectedDates.map(iso=>{
+            const d=dateObj(iso);
+            return `<span class="selected-date-chip">
+              ${d.getDate()} ${months[d.getMonth()].slice(0,3)}
+              <button type="button" onclick="toggleManualDate('${iso}')" title="Прибрати дату">×</button>
+            </span>`;
+          }).join('')}
+        </div>
+      </div>`
+    : `<div class="selected-dates-empty">
+        <b>Поки не обрано жодної дати</b>
+        <small>Натисніть на потрібні числа у календарі вище.</small>
+      </div>`;
 
   host.innerHTML=`
     <div class="manual-picker-head">
-      <button type="button" onclick="stepManualPicker(-1)">←</button>
+      <button type="button" onclick="stepManualPicker(-1)" title="Попередній місяць">←</button>
       <b>${monthsNom[m]} ${y}</b>
-      <button type="button" onclick="stepManualPicker(1)">→</button>
+      <button type="button" onclick="stepManualPicker(1)" title="Наступний місяць">→</button>
     </div>
     <div class="manual-weekdays">${weekShort.map(x=>`<span>${x}</span>`).join('')}</div>
     <div class="manual-days">${cells}</div>
-    <div class="manual-selected-count">Обрано дат: <b>${recurrenceDraftDates.size}</b></div>`;
+    ${selectedHtml}`;
+}
+
+function clearManualDates(){
+  recurrenceDraftDates.clear();
+  recurrenceExcludedDates.clear();
+  recurrenceOverrides={};
+  renderManualDatePicker();
+  renderOccurrencePreview();
 }
 
 function stepManualPicker(delta){
@@ -423,11 +455,19 @@ function renderOccurrencePreview(){
   const dates=generatedRecurrenceDates(mode);
 
   if(!dates.length){
-    host.innerHTML=`<div class="occurrence-empty">${mode==='selected'?'Оберіть хоча б одну дату.':'Вкажіть дату завершення серії.'}</div>`;
+    host.innerHTML=`<div class="occurrence-empty">
+      <b>${mode==='selected'?'Ще немає обраних дат':'Серія ще не сформована'}</b>
+      <small>${mode==='selected'?'Поверніться до кроку 1 і натисніть на потрібні числа в календарі.':'Вкажіть дату «Повторювати до», і список занять з’явиться тут автоматично.'}</small>
+    </div>`;
     return;
   }
 
-  host.innerHTML=dates.map(date=>{
+  const summary=`<div class="occurrence-summary">
+    <b>До серії увійде: ${dates.filter(d=>!recurrenceExcludedDates.has(d)).length} із ${dates.length}</b>
+    <small>Зніміть галочку біля дати, якщо саме цього дня заняття не буде.</small>
+  </div>`;
+
+  host.innerHTML=summary+dates.map(date=>{
     const d=dateObj(date);
     const o=occurrenceOverrides[date]||{};
     const roomKnown=roomOptions.includes(o.roomChoice||'');
