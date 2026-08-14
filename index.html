@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0e1826">
   <title>ФІШЕР — personal control</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body>
 <div class="app">
@@ -16,7 +16,7 @@
       <div class="logo-mark">Ф</div>
       <div>
         <div class="logo-title">ФІШЕР</div>
-        <div class="logo-sub">personal control</div>
+        <div class="logo-sub">особистий контроль</div>
       </div>
     </div>
 
@@ -24,6 +24,7 @@
       <button class="nav-btn active" data-view="home"><span>⌂</span>Головна</button>
       <button class="nav-btn" data-view="week"><span>▦</span>Мій тиждень</button>
       <button class="nav-btn" data-view="classes"><span>◫</span>Заняття</button>
+      <button class="nav-btn" data-view="disciplines"><span>▥</span>Дисципліни</button>
       <button class="nav-btn" data-view="tasks"><span>✓</span>Справи</button>
       <button class="nav-btn" data-view="projects"><span>▣</span>Проєкти</button>
       <button class="nav-btn" data-view="notes"><span>✎</span>Нотатки</button>
@@ -33,12 +34,14 @@
 
     <div class="sidebar-mini">
       <div class="mini-title">ШВИДКИЙ ДОСТУП</div>
+      <button class="mini-link backup-primary" id="backupNowBtn">Зробити резервну копію</button>
+      <button class="mini-link" id="backupHistoryBtn">Історія копій</button>
       <button class="mini-link" id="exportBtn">Експорт даних</button>
       <label class="mini-link file-link">Імпорт даних<input type="file" id="importFile" accept="application/json"></label>
     </div>
 
     <div class="sidebar-bottom">
-      <span>CONTROL v3.0</span>
+      <span>CONTROL v18</span>
       <span class="theme-dot"></span>
     </div>
   </aside>
@@ -63,6 +66,7 @@
     <section id="homeView" class="view active"></section>
     <section id="weekView" class="view"></section>
     <section id="classesView" class="view"></section>
+    <section id="disciplinesView" class="view"></section>
     <section id="tasksView" class="view"></section>
     <section id="projectsView" class="view"></section>
     <section id="notesView" class="view"></section>
@@ -71,6 +75,7 @@
   <nav class="mobile-nav">
     <button class="mobile-btn active" data-view="home"><span>⌂</span><small>Головна</small></button>
     <button class="mobile-btn" data-view="classes"><span>◫</span><small>Заняття</small></button>
+    <button class="mobile-btn" data-view="disciplines"><span>▥</span><small>Дисципліни</small></button>
     <button class="mobile-btn" data-view="tasks"><span>✓</span><small>Справи</small></button>
     <button class="mobile-btn" data-view="projects"><span>▣</span><small>Проєкти</small></button>
   </nav>
@@ -78,6 +83,21 @@
   <button class="fab" id="fab">＋</button>
 </div>
 
+
+
+<div class="backup-overlay hidden" id="backupOverlay">
+  <div class="backup-panel">
+    <div class="backup-panel-head">
+      <div>
+        <div class="small-label">БЕЗПЕКА ДАНИХ</div>
+        <h2>Резервні копії</h2>
+        <p>CONTROL автоматично зберігає до 10 попередніх станів даних.</p>
+      </div>
+      <button class="close-btn" id="closeBackupOverlay">×</button>
+    </div>
+    <div id="backupOverlayContent"></div>
+  </div>
+</div>
 
 <div class="day-overlay hidden" id="dayOverlay">
   <div class="day-screen">
@@ -115,6 +135,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="script.js?v=17"></script>
+<script src="script.js?v=18"></script>
 </body>
 </html>

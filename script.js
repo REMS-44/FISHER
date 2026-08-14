@@ -1,5 +1,6 @@
 
 const KEY='fisher-control-v4';
+const BACKUP_KEY='fisher-control-backups-v1';
 
 const seed={classes:[],tasks:[],projects:[],notes:[],templates:[]};
 const state=load();
@@ -11,13 +12,159 @@ let recurrenceDraftDates=new Set();
 let recurrenceExcludedDates=new Set();
 let recurrenceOverrides={};
 let recurrencePickerMonth=new Date();
+let selectedDisciplineKey=null;
+let selectedSemester=semesterKeyForDate(isoToday());
 
-function load(){try{return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){return structuredClone(seed)}}
-function save(){
+function load(){
+  try{return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')}}
+  catch(e){return structuredClone(seed)}
+}
+
+function backupStamp(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function getBackups(){
+  try{
+    const arr=JSON.parse(localStorage.getItem(BACKUP_KEY)||'[]');
+    return Array.isArray(arr)?arr:[];
+  }catch(e){return []}
+}
+
+function setBackups(arr){
+  localStorage.setItem(BACKUP_KEY,JSON.stringify(arr.slice(0,10)));
+}
+
+function snapshotCounts(snapshot){
+  return {
+    classes:(snapshot.classes||[]).length,
+    tasks:(snapshot.tasks||[]).length,
+    projects:(snapshot.projects||[]).length,
+    notes:(snapshot.notes||[]).length
+  };
+}
+
+function addBackupSnapshot(snapshot,reason='auto'){
+  if(!snapshot || typeof snapshot!=='object')return;
+  const clean={...seed,...snapshot};
+  const serialized=JSON.stringify(clean);
+  const backups=getBackups();
+
+  if(backups[0] && JSON.stringify(backups[0].state)===serialized)return;
+
+  backups.unshift({
+    id:uid('backup'),
+    ts:new Date().toISOString(),
+    label:backupStamp(),
+    reason,
+    state:clean
+  });
+  setBackups(backups);
+}
+
+function archivePersistedState(){
+  const raw=localStorage.getItem(KEY);
+  if(!raw)return;
+  try{addBackupSnapshot(JSON.parse(raw),'auto')}catch(e){}
+}
+
+function persistState(skipBackup=false){
+  if(!skipBackup)archivePersistedState();
   localStorage.setItem(KEY,JSON.stringify(state));
+}
+
+function save(options={}){
+  persistState(Boolean(options.skipBackup));
   renderAll();
   const overlay=document.getElementById('dayOverlay');
   if(overlay && !overlay.classList.contains('hidden')) renderDayOverlay();
+  const backupOverlay=document.getElementById('backupOverlay');
+  if(backupOverlay && !backupOverlay.classList.contains('hidden')) renderBackupManager();
+}
+
+function replaceState(snapshot){
+  Object.keys(state).forEach(k=>delete state[k]);
+  Object.assign(state,structuredClone(seed),structuredClone(snapshot||{}));
+}
+
+function downloadSnapshot(snapshot,filename){
+  const blob=new Blob([JSON.stringify(snapshot,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+function manualBackup(){
+  addBackupSnapshot(structuredClone(state),'manual');
+  const d=new Date();
+  const stamp=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}-${String(d.getMinutes()).padStart(2,'0')}`;
+  downloadSnapshot(state,`FISHER_${stamp}.json`);
+  toast('Резервну копію створено');
+  renderBackupManager();
+}
+
+function restoreBackup(id){
+  const backup=getBackups().find(x=>x.id===id);
+  if(!backup)return;
+  if(!confirm(`Відновити стан за ${backup.label}? Поточний стан буде автоматично збережено в історії.`))return;
+
+  addBackupSnapshot(structuredClone(state),'before-restore');
+  replaceState(backup.state);
+  persistState(true);
+  renderAll();
+  renderBackupManager();
+  toast('Дані відновлено');
+}
+
+function deleteBackup(id){
+  if(!confirm('Видалити цю резервну копію з історії?'))return;
+  setBackups(getBackups().filter(x=>x.id!==id));
+  renderBackupManager();
+}
+
+function openBackupManager(){
+  document.getElementById('backupOverlay').classList.remove('hidden');
+  renderBackupManager();
+}
+function closeBackupManager(){document.getElementById('backupOverlay').classList.add('hidden')}
+
+function formatBackupDate(iso){
+  const d=new Date(iso);
+  return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()} · ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function renderBackupManager(){
+  const host=document.getElementById('backupOverlayContent');
+  if(!host)return;
+  const backups=getBackups();
+
+  host.innerHTML=`
+    <div class="backup-actions-top">
+      <button class="gold-btn" onclick="manualBackup()">＋ Зробити копію зараз</button>
+      <span>Зберігаються останні 10 станів. Новіші — зверху.</span>
+    </div>
+    <div class="backup-list">
+      ${backups.length?backups.map((b,i)=>{
+        const c=snapshotCounts(b.state);
+        const reason=b.reason==='manual'?'Ручна копія':b.reason==='before-restore'?'Перед відновленням':'Автоматична';
+        return `<div class="backup-row">
+          <div class="backup-index">${i+1}</div>
+          <div class="backup-main">
+            <b>${formatBackupDate(b.ts)}</b>
+            <small>${reason} · ${c.classes} занять · ${c.tasks} справ · ${c.projects} проєктів · ${c.notes} нотаток</small>
+          </div>
+          <div class="backup-row-actions">
+            <button onclick="restoreBackup('${b.id}')">Відновити</button>
+            <button class="danger-lite" onclick="deleteBackup('${b.id}')">×</button>
+          </div>
+        </div>`;
+      }).join(''):`<div class="backup-empty">Історії ще немає. Вона з'явиться після першої зміни даних або після ручної резервної копії.</div>`}
+    </div>`;
 }
 function uid(p='x'){return p+'-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6)}
 function esc(v=''){return String(v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
@@ -27,6 +174,103 @@ const months=['січня','лютого','березня','квітня','тр�
 const monthsNom=['Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'];
 const weekdays=['Неділя','Понеділок','Вівторок','Середа','Четвер','Пʼятниця','Субота'];
 const weekShort=['ПН','ВТ','СР','ЧТ','ПТ','СБ','НД'];
+
+function semesterKeyForDate(iso){
+  const d=dateObj(iso)||new Date();
+  const y=d.getFullYear(),m=d.getMonth()+1;
+  if(m===1)return `autumn-${y-1}`;
+  if(m>=8)return `autumn-${y}`;
+  return `spring-${y}`;
+}
+
+function semesterInfo(key){
+  const [kind,yearRaw]=String(key).split('-');
+  const y=Number(yearRaw);
+  if(kind==='autumn'){
+    return {
+      key,
+      start:`${y}-08-01`,
+      end:`${y+1}-01-31`,
+      label:`Осінній семестр ${y}/${String(y+1).slice(-2)}`
+    };
+  }
+  return {
+    key,
+    start:`${y}-02-01`,
+    end:`${y}-07-31`,
+    label:`Весняний семестр ${y-1}/${String(y).slice(-2)}`
+  };
+}
+
+function semesterOptions(){
+  const keys=new Set([semesterKeyForDate(isoToday())]);
+  state.classes.forEach(x=>x.date&&keys.add(semesterKeyForDate(x.date)));
+  return [...keys]
+    .map(semesterInfo)
+    .sort((a,b)=>a.start.localeCompare(b.start));
+}
+
+function classesForSemester(key=selectedSemester){
+  const s=semesterInfo(key);
+  return state.classes
+    .filter(x=>x.date && x.date>=s.start && x.date<=s.end && x.status!=='Скасовано')
+    .sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+}
+
+function disciplineKey(x){
+  return `${(x.subject||'Без назви').trim()}|||${(x.group||'Без групи').trim()}`;
+}
+
+function disciplineGroups(key=selectedSemester){
+  const map=new Map();
+  classesForSemester(key).forEach(x=>{
+    const k=disciplineKey(x);
+    if(!map.has(k))map.set(k,{
+      key:k,
+      subject:(x.subject||'Без назви').trim(),
+      group:(x.group||'Без групи').trim(),
+      items:[]
+    });
+    map.get(k).items.push(x);
+  });
+
+  return [...map.values()].map(g=>{
+    const completed=g.items.filter(x=>x.date<isoToday()).length;
+    const today=g.items.filter(x=>x.date===isoToday()).length;
+    const remaining=g.items.filter(x=>x.date>isoToday()).length;
+    const withTopics=g.items.filter(x=>(x.topic||'').trim()).length;
+    const withPrep=g.items.filter(x=>(x.prep||'').trim()).length;
+    const next=g.items.find(x=>x.date>=isoToday())||null;
+    return {...g,total:g.items.length,completed,today,remaining,withTopics,withPrep,next};
+  }).sort((a,b)=>(a.subject+a.group).localeCompare(b.subject+b.group,'uk'));
+}
+
+function setSemester(key){
+  selectedSemester=key;
+  selectedDisciplineKey=null;
+  renderDisciplines();
+}
+
+function openDiscipline(key){
+  selectedDisciplineKey=decodeURIComponent(key);
+  renderDisciplines();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function closeDiscipline(){
+  selectedDisciplineKey=null;
+  renderDisciplines();
+}
+
+function disciplineProgress(completed,total){
+  return total?Math.round(completed/total*100):0;
+}
+
+function lessonTemporalLabel(x){
+  if(x.date<isoToday())return ['Минуло','past'];
+  if(x.date===isoToday())return ['Сьогодні','today'];
+  return ['Попереду','future'];
+}
 
 function fmtDate(s){const d=dateObj(s); if(!d)return '—'; return `${d.getDate()} ${months[d.getMonth()]}`}
 function fmtShort(s){const d=dateObj(s); if(!d)return '—'; return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`}
@@ -948,6 +1192,7 @@ function renderAll(){
   renderHome();
   renderWeek();
   renderClasses();
+  renderDisciplines();
   renderTasks();
   renderProjects();
   renderNotes();
@@ -1069,6 +1314,134 @@ function renderClasses(){
           <td>${actions('class',x.id)}</td>
         </tr>`).join('')}</tbody>
       </table>`:`<div class="empty-state">Занять ще немає.</div>`}</div>`;
+}
+
+
+function renderDisciplines(){
+  const host=document.getElementById('disciplinesView');
+  if(!host)return;
+
+  const semesters=semesterOptions();
+  if(!semesters.some(x=>x.key===selectedSemester)){
+    selectedSemester=semesterKeyForDate(isoToday());
+  }
+
+  const semester=semesterInfo(selectedSemester);
+  const groups=disciplineGroups(selectedSemester);
+
+  if(selectedDisciplineKey){
+    const group=groups.find(g=>g.key===selectedDisciplineKey);
+    if(group){
+      const progress=disciplineProgress(group.completed,group.total);
+      host.innerHTML=`
+        <div class="discipline-detail-head">
+          <button class="back-btn" onclick="closeDiscipline()">← До дисциплін</button>
+          <div class="discipline-detail-title">
+            <span>${esc(semester.label)}</span>
+            <h2>${esc(group.subject)}</h2>
+            <p>${esc(group.group)}</p>
+          </div>
+          <div class="discipline-detail-stats">
+            <div><small>УСЬОГО</small><b>${group.total}</b></div>
+            <div><small>МИНУЛО</small><b>${group.completed}</b></div>
+            <div><small>ЗАЛИШИЛОСЯ</small><b>${group.remaining+group.today}</b></div>
+          </div>
+        </div>
+
+        <div class="discipline-progress-card">
+          <div>
+            <b>Прогрес семестру</b>
+            <small>${group.completed} із ${group.total} занять уже минули</small>
+          </div>
+          <div class="discipline-progress-track"><span style="width:${progress}%"></span></div>
+          <strong>${progress}%</strong>
+        </div>
+
+        <div class="discipline-plan">
+          ${group.items.map((x,i)=>{
+            const [status,statusClass]=lessonTemporalLabel(x);
+            return `<div class="discipline-lesson ${statusClass}">
+              <div class="discipline-lesson-num">${i+1}</div>
+              <div class="discipline-lesson-date">
+                <b>${fmtDate(x.date)}</b>
+                <small>${pairNumber(x.time,x.end)} · ${esc(x.time||'—')}${x.end?`–${esc(x.end)}`:''}</small>
+              </div>
+              <div class="discipline-lesson-main">
+                <div class="discipline-lesson-meta">
+                  <span>${esc(lessonTypeLabel(x))}</span>
+                  <span>${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</span>
+                  <span class="lesson-state ${statusClass}">${status}</span>
+                </div>
+                <h4>${x.topic?esc(x.topic):'<span class="missing-value">Тема ще не внесена</span>'}</h4>
+                ${x.prep
+                  ?`<div class="discipline-prep"><b>Підготувати:</b> ${esc(x.prep)}</div>`
+                  :`<div class="discipline-prep empty">Що підготувати — не вказано</div>`}
+              </div>
+              <div class="discipline-lesson-actions">
+                <button onclick="editEntry('class','${x.id}')">Редагувати</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      return;
+    }
+    selectedDisciplineKey=null;
+  }
+
+  const totalLessons=groups.reduce((s,g)=>s+g.total,0);
+  const totalCompleted=groups.reduce((s,g)=>s+g.completed,0);
+  const totalRemaining=groups.reduce((s,g)=>s+g.remaining+g.today,0);
+
+  host.innerHTML=`
+    <div class="disciplines-toolbar">
+      <div>
+        <div class="small-label">ПЛАН ВИКЛАДАННЯ</div>
+        <h2>Дисципліни</h2>
+        <p>Формуються автоматично з уже внесених занять — нічого дублювати не потрібно.</p>
+      </div>
+      <select onchange="setSemester(this.value)">
+        ${semesters.map(s=>`<option value="${s.key}" ${s.key===selectedSemester?'selected':''}>${esc(s.label)}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="semester-summary">
+      <div><small>ДИСЦИПЛІН</small><b>${groups.length}</b></div>
+      <div><small>ЗАНЯТЬ</small><b>${totalLessons}</b></div>
+      <div><small>МИНУЛО</small><b>${totalCompleted}</b></div>
+      <div><small>ЗАЛИШИЛОСЯ</small><b>${totalRemaining}</b></div>
+    </div>
+
+    ${groups.length?`
+      <div class="discipline-grid">
+        ${groups.map(g=>{
+          const progress=disciplineProgress(g.completed,g.total);
+          return `<button class="discipline-card" onclick="openDiscipline('${encodeURIComponent(g.key)}')">
+            <div class="discipline-card-top">
+              <span>${esc(g.group)}</span>
+              <b>${g.total} ${g.total===1?'заняття':'занять'}</b>
+            </div>
+            <h3>${esc(g.subject)}</h3>
+            <div class="discipline-card-progress">
+              <span style="width:${progress}%"></span>
+            </div>
+            <div class="discipline-card-numbers">
+              <span><b>${g.completed}</b><small>минуло</small></span>
+              <span><b>${g.remaining+g.today}</b><small>залишилось</small></span>
+              <span><b>${g.withTopics}/${g.total}</b><small>тем внесено</small></span>
+            </div>
+            ${g.next?`<div class="discipline-next">
+              <small>НАСТУПНЕ</small>
+              <b>${fmtDate(g.next.date)} · ${pairNumber(g.next.time,g.next.end)}</b>
+              <span>${g.next.topic?esc(g.next.topic):'Тема ще не внесена'}</span>
+            </div>`:`<div class="discipline-next done"><b>Семестр за цією дисципліною завершено</b></div>`}
+          </button>`;
+        }).join('')}
+      </div>`
+      :`<div class="discipline-empty">
+        <b>У цьому семестрі ще немає занять.</b>
+        <span>Щойно ти додаси заняття з групою та назвою дисципліни, CONTROL автоматично створить тут дисципліну.</span>
+        <button class="gold-btn" onclick="openAdd('class')">＋ Додати перше заняття</button>
+      </div>`}`;
 }
 
 function renderTasks(){
@@ -1409,8 +1782,21 @@ function doSearch(){
   box.innerHTML=hits.length?hits.slice(0,20).map(x=>`<div class="search-hit"><b>${x[0]}</b>${esc(x[1])}</div>`).join(''):`<div class="search-hit">Нічого не знайдено</div>`;
 }
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(window._toast);window._toast=setTimeout(()=>t.classList.remove('show'),1700)}
-function exportData(){const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`FISHER-control-${isoToday()}.json`;a.click();URL.revokeObjectURL(a.href)}
-function importData(file){const r=new FileReader();r.onload=()=>{try{Object.assign(state,seed,JSON.parse(r.result));save();toast('Дані імпортовано')}catch(e){alert('Не вдалося прочитати файл.')}};r.readAsText(file)}
+function exportData(){downloadSnapshot(state,`FISHER_DATA_${isoToday()}.json`);toast('Дані експортовано')}
+function importData(file){
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const parsed=JSON.parse(r.result);
+      if(!parsed || typeof parsed!=='object')throw new Error('bad');
+      replaceState(parsed);
+      selectedDisciplineKey=null;
+      save();
+      toast('Дані імпортовано');
+    }catch(e){alert('Не вдалося прочитати файл.')}
+  };
+  r.readAsText(file);
+}
 
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
 document.getElementById('fab').addEventListener('click',openModal);
@@ -1422,6 +1808,10 @@ document.querySelectorAll('#typeGrid [data-type]').forEach(b=>b.addEventListener
 document.getElementById('entryForm').addEventListener('submit',submitEntry);
 document.getElementById('searchBtn').addEventListener('click',()=>document.getElementById('searchBox').classList.toggle('hidden'));
 document.getElementById('searchInput').addEventListener('input',doSearch);
+document.getElementById('backupNowBtn').addEventListener('click',manualBackup);
+document.getElementById('backupHistoryBtn').addEventListener('click',openBackupManager);
+document.getElementById('closeBackupOverlay').addEventListener('click',closeBackupManager);
+document.getElementById('backupOverlay').addEventListener('click',e=>{if(e.target.id==='backupOverlay')closeBackupManager()});
 document.getElementById('exportBtn').addEventListener('click',exportData);
 document.getElementById('importFile').addEventListener('change',e=>e.target.files[0]&&importData(e.target.files[0]));
 
