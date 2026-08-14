@@ -1569,3 +1569,38 @@ button{cursor:pointer}
   border-color:#ccd8e5;
   box-shadow:0 3px 10px rgba(28,40,55,.04);
 }
+
+
+/* v15 — one source of truth for selected dates + exceptions */
+#occurrencePreviewField{
+  border-top:1px solid #e6ebf1;
+  padding-top:12px;
+}
+
+.occurrence-summary{
+  background:#eef7f1;
+  border-color:#d4e9dc;
+  padding:10px 12px;
+}
+.occurrence-summary b{
+  font-size:11px;
+  color:#2e6646;
+}
+.occurrence-summary small{
+  font-size:9px;
+  line-height:1.4;
+}
+
+.occurrence-row{
+  grid-template-columns:30px 118px minmax(145px,1fr) minmax(150px,1fr) minmax(145px,1fr);
+}
+
+.occ-date b{
+  font-size:11px;
+}
+
+@media(max-width:980px){
+  .occurrence-row{
+    grid-template-columns:30px 105px 1fr;
+  }
+}

@@ -386,6 +386,15 @@ function renderManualDatePicker(){
     <div class="manual-weekdays">${weekShort.map(x=>`<span>${x}</span>`).join('')}</div>
     <div class="manual-days">${cells}</div>
     ${selectedHtml}`;
+
+  // IMPORTANT: step 2 is rendered from the exact same local array
+  // that created the visible "Обрані дати" chips above.
+  const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
+  if(mode==='selected'){
+    const previewField=document.getElementById('occurrencePreviewField');
+    if(previewField)previewField.classList.remove('hidden');
+    renderOccurrencePreviewFromDates(selectedDates,'selected');
+  }
 }
 
 function clearManualDates(){
@@ -393,7 +402,6 @@ function clearManualDates(){
   recurrenceExcludedDates.clear();
   recurrenceOverrides={};
   renderManualDatePicker();
-  renderOccurrencePreview();
 }
 
 function stepManualPicker(delta){
@@ -414,11 +422,7 @@ function toggleManualDate(iso){
     recurrenceDraftDates.add(iso);
   }
 
-  const previewField=document.getElementById('occurrencePreviewField');
-  if(previewField)previewField.classList.remove('hidden');
-
   renderManualDatePicker();
-  renderOccurrencePreview();
 }
 
 function occurrenceOverride(date){
@@ -451,45 +455,40 @@ function slotOptionsForOccurrence(selected){
   `;
 }
 
-function renderOccurrencePreview(){
+function renderOccurrencePreviewFromDates(dates,mode='selected'){
   const host=document.getElementById('occurrencePreview');
   if(!host)return;
 
-  const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
-  const manualField=document.getElementById('manualDatesField');
-  const manualModeActive=manualField && !manualField.classList.contains('hidden');
+  const cleanDates=[...new Set((dates||[]).filter(Boolean))].sort();
 
-  let dates;
-  if(mode==='selected' || manualModeActive){
-    dates=[...recurrenceDraftDates].sort();
-  }else{
-    dates=generatedRecurrenceDates(mode);
-  }
-
-  if(!dates.length){
+  if(!cleanDates.length){
     host.innerHTML=`<div class="occurrence-empty">
-      <b>${(mode==='selected'||manualModeActive)?'Ще немає обраних дат':'Серія ще не сформована'}</b>
-      <small>${(mode==='selected'||manualModeActive)?'Натисніть на потрібні числа в календарі у кроці 1. Щойно дата буде вибрана, вона одразу з’явиться тут.':'Вкажіть дату «Повторювати до», і список занять з’явиться тут автоматично.'}</small>
+      <b>${mode==='selected'?'Ще немає обраних дат':'Серія ще не сформована'}</b>
+      <small>${mode==='selected'
+        ?'Натисніть на потрібні числа в календарі у кроці 1. Щойно дата буде вибрана, вона одразу з’явиться тут.'
+        :'Вкажіть дату «Повторювати до», і список занять з’явиться тут автоматично.'}</small>
     </div>`;
     return;
   }
 
+  const includedCount=cleanDates.filter(d=>!recurrenceExcludedDates.has(d)).length;
+
   const summary=`<div class="occurrence-summary">
-    <b>До серії увійде: ${dates.filter(d=>!recurrenceExcludedDates.has(d)).length} із ${dates.length}</b>
-    <small>Обрані у календарі дати вже синхронізовані з цим списком. Зніміть галочку біля дати, якщо саме цього дня заняття не буде.</small>
+    <b>Вибрано дат: ${cleanDates.length} · До серії увійде: ${includedCount}</b>
+    <small>Це ті самі дати, що показані у кроці 1. Зніміть галочку, якщо конкретного дня заняття не буде.</small>
   </div>`;
 
-  host.innerHTML=summary+dates.map(date=>{
+  host.innerHTML=summary+cleanDates.map(date=>{
     const d=dateObj(date);
-    const o=occurrenceOverrides[date]||{};
-    const roomKnown=roomOptions.includes(o.roomChoice||'');
+    const o=recurrenceOverrides[date]||{};
     const roomChoice=o.roomChoice||'';
     const lessonType=o.lessonType||'';
     const included=!recurrenceExcludedDates.has(date);
 
     return `<div class="occurrence-row ${included?'':'excluded'}">
-      <label class="occ-include">
-        <input type="checkbox" ${included?'checked':''} onchange="setOccurrenceIncluded('${date}',this.checked); this.closest('.occurrence-row').classList.toggle('excluded',!this.checked)">
+      <label class="occ-include" title="Включити або пропустити цю дату">
+        <input type="checkbox" ${included?'checked':''}
+          onchange="setOccurrenceIncluded('${date}',this.checked); this.closest('.occurrence-row').classList.toggle('excluded',!this.checked); renderOccurrencePreviewFromDates(currentPreviewDates(),'${mode}')">
       </label>
 
       <div class="occ-date">
@@ -505,12 +504,17 @@ function renderOccurrencePreview(){
       </div>
 
       <div class="occ-control">
-        <label>Вид</label>
+        <label>Вид заняття</label>
         <select onchange="setOccurrenceOverride('${date}','lessonType',this.value)">
           <option value="">Як у базовому занятті</option>
           ${lessonTypes.map(t=>`<option ${t===lessonType?'selected':''}>${t}</option>`).join('')}
         </select>
-        <input id="occ-type-custom-${date}" class="${lessonType==='Інше'?'':'hidden'} occ-custom" type="text" value="${esc(o.lessonTypeCustom||'')}" placeholder="Свій вид" oninput="setOccurrenceOverride('${date}','lessonTypeCustom',this.value)">
+        <input id="occ-type-custom-${date}"
+          class="${lessonType==='Інше'?'':'hidden'} occ-custom"
+          type="text"
+          value="${esc(o.lessonTypeCustom||'')}"
+          placeholder="Свій вид"
+          oninput="setOccurrenceOverride('${date}','lessonTypeCustom',this.value)">
       </div>
 
       <div class="occ-control">
@@ -520,10 +524,28 @@ function renderOccurrencePreview(){
           ${roomOptions.map(r=>`<option ${r===roomChoice?'selected':''}>${r}</option>`).join('')}
           <option value="Інше" ${roomChoice==='Інше'?'selected':''}>Інше</option>
         </select>
-        <input id="occ-room-custom-${date}" class="${roomChoice==='Інше'?'':'hidden'} occ-custom" type="text" value="${esc(o.roomCustom||'')}" placeholder="Своя аудиторія" oninput="setOccurrenceOverride('${date}','roomCustom',this.value)">
+        <input id="occ-room-custom-${date}"
+          class="${roomChoice==='Інше'?'':'hidden'} occ-custom"
+          type="text"
+          value="${esc(o.roomCustom||'')}"
+          placeholder="Своя аудиторія"
+          oninput="setOccurrenceOverride('${date}','roomCustom',this.value)">
       </div>
     </div>`;
   }).join('');
+}
+
+function currentPreviewDates(){
+  const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
+  if(mode==='selected'){
+    return [...recurrenceDraftDates].sort();
+  }
+  return generatedRecurrenceDates(mode);
+}
+
+function renderOccurrencePreview(){
+  const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
+  renderOccurrencePreviewFromDates(currentPreviewDates(),mode);
 }
 
 function refreshRecurrenceUI(){
@@ -531,9 +553,6 @@ function refreshRecurrenceUI(){
 
   if(mode==='selected'){
     renderManualDatePicker();
-    const previewField=document.getElementById('occurrencePreviewField');
-    if(previewField)previewField.classList.remove('hidden');
-    renderOccurrencePreview();
     return;
   }
 
@@ -541,10 +560,7 @@ function refreshRecurrenceUI(){
 }
 
 function buildFlexibleOccurrences(data,mode,repeatUntil){
-  const manualField=document.getElementById('manualDatesField');
-  const manualModeActive=manualField && !manualField.classList.contains('hidden');
-
-  const sourceDates=(mode==='selected' || manualModeActive)
+  const sourceDates=mode==='selected'
     ? [...recurrenceDraftDates].sort()
     : generatedRecurrenceDates(mode);
 
