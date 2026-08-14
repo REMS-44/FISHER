@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0c0f" />
+  <title>CONTROL</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">C</div>
+        <div>
+          <div class="brand-title">CONTROL</div>
+          <div class="brand-sub">personal workspace</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard"><span>⌂</span><b>Головна</b></button>
+        <button class="nav-item" data-view="week"><span>▦</span><b>Мій тиждень</b></button>
+        <button class="nav-item" data-view="classes"><span>◉</span><b>Заняття</b></button>
+        <button class="nav-item" data-view="tasks"><span>✓</span><b>Справи</b></button>
+        <button class="nav-item" data-view="projects"><span>◇</span><b>Проєкти</b></button>
+        <button class="nav-item" data-view="notes"><span>✎</span><b>Нотатки</b></button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="ghost-btn" id="backupBtn">Експорт даних</button>
+        <label class="ghost-btn file-label">Імпорт даних<input id="importInput" type="file" accept="application/json"></label>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow" id="todayEyebrow"></div>
+          <h1 id="pageTitle">Головна</h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn" id="searchToggle" aria-label="Пошук">⌕</button>
+          <button class="primary-btn" id="addBtn"><span>＋</span> Додати</button>
+        </div>
+      </header>
+
+      <div id="searchPanel" class="search-panel hidden">
+        <input id="globalSearch" type="search" placeholder="Пошук у справах, заняттях, проєктах і нотатках…" />
+        <div id="searchResults" class="search-results"></div>
+      </div>
+
+      <section id="dashboardView" class="view active"></section>
+      <section id="weekView" class="view"></section>
+      <section id="classesView" class="view"></section>
+      <section id="tasksView" class="view"></section>
+      <section id="projectsView" class="view"></section>
+      <section id="notesView" class="view"></section>
+    </main>
+
+    <nav class="mobile-nav">
+      <button class="mobile-nav-item active" data-view="dashboard"><span>⌂</span><small>Головна</small></button>
+      <button class="mobile-nav-item" data-view="week"><span>▦</span><small>Тиждень</small></button>
+      <button class="mobile-nav-item" data-view="tasks"><span>✓</span><small>Справи</small></button>
+      <button class="mobile-nav-item" data-view="projects"><span>◇</span><small>Проєкти</small></button>
+      <button class="mobile-nav-item" data-view="classes"><span>◉</span><small>Заняття</small></button>
+    </nav>
+
+    <button class="fab" id="mobileAddBtn" aria-label="Додати">＋</button>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <div class="eyebrow">НОВИЙ ЗАПИС</div>
+          <h2 id="modalTitle">Що додаємо?</h2>
+        </div>
+        <button class="icon-btn" id="closeModal">×</button>
+      </div>
+
+      <div id="typePicker" class="type-picker">
+        <button data-type="task"><span>✓</span><b>Справу</b><small>дедлайн, пріоритет, проєкт</small></button>
+        <button data-type="class"><span>◉</span><b>Заняття</b><small>група, дисципліна, аудиторія</small></button>
+        <button data-type="project"><span>◇</span><b>Проєкт</b><small>дедлайн, прогрес, наступний крок</small></button>
+        <button data-type="note"><span>✎</span><b>Нотатку</b><small>думка, ідея, посилання</small></button>
+      </div>
+
+      <form id="entryForm" class="entry-form hidden">
+        <input type="hidden" id="entryType" />
+        <input type="hidden" id="entryId" />
+        <div id="formFields"></div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" id="cancelForm">Скасувати</button>
+          <button type="submit" class="primary-btn">Зберегти</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>

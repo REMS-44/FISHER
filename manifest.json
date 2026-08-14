@@ -1,0 +1,9 @@
+{
+  "name": "CONTROL — personal workspace",
+  "short_name": "CONTROL",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b0c0f",
+  "theme_color": "#0b0c0f",
+  "description": "Персональний органайзер: заняття, справи, проєкти, нотатки і тиждень."
+}
