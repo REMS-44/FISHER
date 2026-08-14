@@ -38,6 +38,10 @@ const lessonSlots=[
   ['17:10','18:30'],
   ['18:40','20:00']
 ];
+function pairNumber(start,end){
+  const idx=lessonSlots.findIndex(([s,e])=>s===start && e===end);
+  return idx>=0 ? `${idx+1} пара` : (start ? 'інший час' : 'час не вказано');
+}
 const lessonTypes=['Лекція','Практичне','Лабораторне','Семінар','Індивідуальне','Залік','Іспит','Консультація','Репетиція','Контрольна робота','Інше'];
 function slotValue(start,end){return start&&end?`${start}|${end}`:''}
 function lessonTypeLabel(x){return x.lessonType==='Інше'?(x.lessonTypeCustom||'Інше'):(x.lessonType||'—')}
@@ -182,28 +186,48 @@ function renderMonthPlanner(){
   for(let i=0;i<42;i++){
     const d=new Date(start); d.setDate(start.getDate()+i);
     const iso=isoLocal(d);
-    const items=getItemsForDate(iso);
+
+    const dayClasses=state.classes
+      .filter(x=>x.date===iso && x.status!=='Скасовано')
+      .sort((a,b)=>(a.time||'').localeCompare(b.time||''));
+
+    const dayTasks=state.tasks.filter(x=>!x.done && x.date===iso);
+    const dayProjects=state.projects.filter(x=>x.status!=='Завершено' && x.deadline===iso);
+
+    const total=dayClasses.length+dayTasks.length+dayProjects.length;
     const inMonth=d.getMonth()===month;
-    const counts={
-      class: items.filter(x=>x.kind==='class').length,
-      task: items.filter(x=>x.kind==='task').length,
-      project: items.filter(x=>x.kind==='project').length
-    };
+
     const cls=['month-cell'];
     if(!inMonth) cls.push('muted');
     if(iso===isoToday()) cls.push('today');
     if(iso===selectedDate) cls.push('active');
-    if(items.length) cls.push('has-items');
+    if(total) cls.push('has-items');
+
+    const classesHtml=dayClasses.map(x=>`
+      <div class="calendar-class">
+        <div class="calendar-class-top">
+          <span class="pair-badge">${esc(pairNumber(x.time,x.end))}</span>
+          <span class="pair-time">${esc(x.time||'—')}${x.end?`–${esc(x.end)}`:''}</span>
+        </div>
+        <div class="calendar-subject">${esc(x.subject||'Заняття')}</div>
+        <div class="calendar-class-meta">
+          <span>${esc(x.group||'—')}</span>
+          <span>${esc(lessonTypeLabel(x))}</span>
+          <span>${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</span>
+        </div>
+      </div>`).join('');
+
+    const extras=[];
+    if(dayTasks.length) extras.push(`<span class="calendar-extra task">✓ ${dayTasks.length} ${dayTasks.length===1?'справа':'справи'}</span>`);
+    if(dayProjects.length) extras.push(`<span class="calendar-extra project">▣ ${dayProjects.length} ${dayProjects.length===1?'дедлайн':'дедлайни'}</span>`);
 
     cells += `<button type="button" class="${cls.join(' ')}" onclick="openDay('${iso}')" title="${tooltipForDate(iso)}">
-      <div class="month-num">${d.getDate()}</div>
-      <div class="month-meta ${items.length?'':'empty'}">${items.length?pluralEvents(items.length):'—'}</div>
-      <div class="month-submeta">${counts.class?`${counts.class} зан.`:''}${counts.class&&counts.task?' · ':''}${counts.task?`${counts.task} спр.`:''}${(counts.class||counts.task)&&(counts.project)?' · ':''}${counts.project?`${counts.project} проєкт.`:''}</div>
-      <div class="month-markers">
-        ${counts.class?'<span class="m-dot class"></span>':''}
-        ${counts.task?'<span class="m-dot task"></span>':''}
-        ${counts.project?'<span class="m-dot project"></span>':''}
+      <div class="month-cell-head">
+        <div class="month-num">${d.getDate()}</div>
+        ${total?`<div class="month-total">${pluralEvents(total)}</div>`:''}
       </div>
+      <div class="calendar-classes">${classesHtml}</div>
+      ${extras.length?`<div class="calendar-extras">${extras.join('')}</div>`:''}
     </button>`;
   }
 
@@ -212,7 +236,7 @@ function renderMonthPlanner(){
     <div class="planner-headline">
       <div>
         <div class="planner-label">${monthsNom[month]} ${year}</div>
-        <div class="planner-subhint">Натисни на день, щоб побачити все, що там є</div>
+        <div class="planner-subhint">У клітинці одразу видно всі заняття: номер пари, час, дисципліну, групу, вид заняття та аудиторію. Натисни на день для повного перегляду й редагування.</div>
       </div>
       <div class="planner-nav">
         <button onclick="stepPlannerMonth(-1)">← Попередній</button>
