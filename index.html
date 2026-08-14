@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0e1826">
   <title>ФІШЕР — personal control</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="styles.css?v=18">
+  <link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
 <div class="app">
@@ -41,7 +41,7 @@
     </div>
 
     <div class="sidebar-bottom">
-      <span>CONTROL v18</span>
+      <span>CONTROL v19</span>
       <span class="theme-dot"></span>
     </div>
   </aside>
@@ -80,7 +80,19 @@
     <button class="mobile-btn" data-view="projects"><span>▣</span><small>Проєкти</small></button>
   </nav>
 
-  <button class="fab" id="fab">＋</button>
+  <div class="quick-add-wrap">
+    <div class="quick-add-menu hidden" id="quickAddMenu">
+      <div class="quick-add-head">
+        <small>ДОДАТИ НА ДАТУ</small>
+        <b id="quickAddDateLabel"></b>
+      </div>
+      <button data-quick-type="class"><span>◫</span><div><b>Заняття</b><small>група, дисципліна, пара</small></div></button>
+      <button data-quick-type="task"><span>✓</span><div><b>Справа</b><small>завдання або нагадування</small></div></button>
+      <button data-quick-type="project"><span>▣</span><div><b>Проєкт</b><small>дедлайн на активну дату</small></div></button>
+      <button data-quick-type="note"><span>✎</span><div><b>Нотатка</b><small>без прив’язки до дати</small></div></button>
+    </div>
+    <button class="fab" id="fab" title="Швидко додати">＋</button>
+  </div>
 </div>
 
 
@@ -135,6 +147,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="script.js?v=18"></script>
+<script src="script.js?v=19"></script>
 </body>
 </html>

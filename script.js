@@ -266,6 +266,58 @@ function disciplineProgress(completed,total){
   return total?Math.round(completed/total*100):0;
 }
 
+const groupColorPalette=[
+  {bg:'#eef5ff',border:'#4c8df7',soft:'#dbe9ff',text:'#2f66b1'},
+  {bg:'#eef8f2',border:'#49af78',soft:'#dcefe4',text:'#347f58'},
+  {bg:'#f4f0ff',border:'#8a72d8',soft:'#e6defb',text:'#6651b0'},
+  {bg:'#fff4e8',border:'#d99043',soft:'#f8e3cb',text:'#9b632d'},
+  {bg:'#fff0f0',border:'#d96969',soft:'#f7dcdc',text:'#9e4949'},
+  {bg:'#edf8f8',border:'#4aa6a6',soft:'#d7ecec',text:'#357a7a'},
+  {bg:'#fff2f7',border:'#c76c99',soft:'#f2dce7',text:'#925070'},
+  {bg:'#f5f5e9',border:'#9d9c50',soft:'#e8e7cf',text:'#747337'}
+];
+
+function stringHash(value=''){
+  let h=0;
+  for(let i=0;i<value.length;i++)h=((h<<5)-h)+value.charCodeAt(i),h|=0;
+  return Math.abs(h);
+}
+
+function groupColor(group=''){
+  const key=(group||'Без групи').trim().toUpperCase();
+  return groupColorPalette[stringHash(key)%groupColorPalette.length];
+}
+
+function groupStyle(group=''){
+  const c=groupColor(group);
+  return `--group-bg:${c.bg};--group-border:${c.border};--group-soft:${c.soft};--group-text:${c.text}`;
+}
+
+function currentSemesterGroups(){
+  const base=monthCursor(selectedMonthOffset);
+  const monthStart=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}-01`;
+  const endDate=new Date(base.getFullYear(),base.getMonth()+1,0);
+  const monthEnd=isoLocal(endDate);
+  return [...new Set(
+    state.classes
+      .filter(x=>x.date>=monthStart && x.date<=monthEnd && x.status!=='Скасовано')
+      .map(x=>(x.group||'Без групи').trim())
+      .filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b,'uk'));
+}
+
+function renderGroupLegend(){
+  const groups=currentSemesterGroups();
+  if(!groups.length)return '';
+  return `<div class="group-legend">
+    <span class="group-legend-title">ГРУПИ:</span>
+    ${groups.map(g=>{
+      const c=groupColor(g);
+      return `<span class="group-legend-item"><i style="background:${c.border}"></i>${esc(g)}</span>`;
+    }).join('')}
+  </div>`;
+}
+
 function lessonTemporalLabel(x){
   if(x.date<isoToday())return ['Минуло','past'];
   if(x.date===isoToday())return ['Сьогодні','today'];
@@ -965,6 +1017,7 @@ function stepPlannerMonth(delta){ setPlannerMonth(selectedMonthOffset + Number(d
 function openDay(iso){
   selectedDate=iso;
   selectedMonthOffset=monthOffsetForDate(iso);
+  closeQuickAddMenu();
   renderHome();
   renderDayOverlay();
   document.getElementById('dayOverlay').classList.remove('hidden');
@@ -1046,13 +1099,13 @@ function renderMonthPlanner(){
     if(total) cls.push('has-items');
 
     const classesHtml=dayClasses.map(x=>`
-      <div class="cal-entry cal-class">
+      <div class="cal-entry cal-class" style="${groupStyle(x.group)}">
         <div class="cal-entry-line">
           <span class="cal-pair">${esc(pairNumber(x.time,x.end))}</span>
           <span class="cal-time">${esc(x.time||'—')}${x.end?`–${esc(x.end)}`:''}</span>
         </div>
         <div class="cal-title">${esc(x.subject||'Заняття')}</div>
-        <div class="cal-info"><b>${esc(x.group||'—')}</b> · ${esc(lessonTypeLabel(x))} · ${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</div>
+        <div class="cal-info"><b><i class="group-dot"></i>${esc(x.group||'—')}</b> · ${esc(lessonTypeLabel(x))} · ${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</div>
         ${x.topic?`<div class="cal-topic">Тема: ${esc(x.topic)}</div>`:''}
         ${x.prep?`<div class="cal-prep"><b>Підготувати:</b> ${esc(x.prep)}</div>`:''}
       </div>`).join('');
@@ -1101,6 +1154,7 @@ function renderMonthPlanner(){
         <button onclick="stepPlannerMonth(1)">Наступний →</button>
       </div>
     </div>
+    ${renderGroupLegend()}
     <div class="planner-scroll">
       <div class="planner-grid">
         <div class="planner-weekdays">${weekShort.map(d=>`<div>${d}</div>`).join('')}</div>
@@ -1198,11 +1252,47 @@ function renderAll(){
   renderNotes();
 }
 
+function tomorrowIso(){
+  const d=new Date();
+  d.setDate(d.getDate()+1);
+  return isoLocal(d);
+}
+
+function prepItemCount(text=''){
+  if(!String(text).trim())return 0;
+  const parts=String(text)
+    .split(/\n|;|•|·/)
+    .map(x=>x.trim())
+    .filter(Boolean);
+  return Math.max(1,parts.length);
+}
+
+function renderTomorrowStrip(){
+  const iso=tomorrowIso();
+  const classes=state.classes.filter(x=>x.date===iso && x.status!=='Скасовано');
+  const tasks=state.tasks.filter(x=>x.date===iso && !x.done);
+  const prepCount=classes.reduce((sum,x)=>sum+prepItemCount(x.prep),0);
+
+  return `<button class="tomorrow-strip" onclick="openDay('${iso}')">
+    <div class="tomorrow-label">
+      <small>ЗАВТРА</small>
+      <b>${fmtDate(iso)}</b>
+    </div>
+    <div class="tomorrow-summary">
+      <span><strong>${classes.length}</strong> ${classes.length===1?'заняття':'заняття'}</span>
+      ${tasks.length?`<span><strong>${tasks.length}</strong> ${tasks.length===1?'справа':'справи'}</span>`:''}
+      ${prepCount?`<span class="tomorrow-prep"><strong>${prepCount}</strong> ${prepCount===1?'пункт підготовки':'пункти підготовки'}</span>`:''}
+      ${!classes.length&&!tasks.length?`<span class="tomorrow-clear">Нічого не заплановано</span>`:''}
+    </div>
+    <span class="tomorrow-open">Відкрити день →</span>
+  </button>`;
+}
+
 function renderHome(){
   const tClasses=todayClasses();
   const todayTasks=openTasks().filter(x=>x.date===isoToday());
   const timeline=[
-    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),topic:x.topic||'',prep:x.prep||'',badge:'ЗАНЯТТЯ',color:typeColor(i)})),
+    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),topic:x.topic||'',prep:x.prep||'',badge:'ЗАНЯТТЯ',color:typeColor(i),group:x.group||''})),
     ...todayTasks.map((x,i)=>({time:x.time||'—',title:x.title,sub:x.category||'',badge:'СПРАВА',color:typeColor(i+2)}))
   ].sort((a,b)=>(a.time||'').localeCompare(b.time||''));
 
@@ -1223,7 +1313,7 @@ function renderHome(){
           ${timeline.length?`<div class="today-list">${timeline.map((x,i)=>`
             <div class="today-row">
               <div class="today-time"><b>${esc(x.time)}</b><small>${esc(x.end||'')}</small></div>
-              <div class="type-line" style="background:${['#4c8df7','#49af78','#8a72d8','#d99043','#e36565'][i%5]}"></div>
+              <div class="type-line" style="background:${x.group?groupColor(x.group).border:['#4c8df7','#49af78','#8a72d8','#d99043','#e36565'][i%5]}"></div>
               <div class="today-main">
                 <b>${esc(x.title)}</b>
                 <small>${esc(x.sub)}</small>
@@ -1253,6 +1343,8 @@ function renderHome(){
         </div>
       </div>
     </div>
+
+    ${renderTomorrowStrip()}
 
     ${renderPrepReminder()}
 
@@ -1531,6 +1623,39 @@ function openModal(){
   document.getElementById('modalTitle').textContent='Що додаємо?';
 }
 function closeModal(){document.getElementById('modal').classList.add('hidden')}
+function activeQuickDate(){
+  return selectedDate || isoToday();
+}
+
+function updateQuickAddDateLabel(){
+  const el=document.getElementById('quickAddDateLabel');
+  if(el)el.textContent=fmtDate(activeQuickDate());
+}
+
+function toggleQuickAddMenu(force){
+  const menu=document.getElementById('quickAddMenu');
+  if(!menu)return;
+  const shouldOpen=force===undefined?menu.classList.contains('hidden'):Boolean(force);
+  menu.classList.toggle('hidden',!shouldOpen);
+  document.getElementById('fab')?.classList.toggle('open',shouldOpen);
+  if(shouldOpen)updateQuickAddDateLabel();
+}
+
+function closeQuickAddMenu(){toggleQuickAddMenu(false)}
+
+function quickAdd(type){
+  const iso=activeQuickDate();
+  closeQuickAddMenu();
+
+  if(type==='note'){
+    openModal();
+    showForm('note');
+    return;
+  }
+
+  openAddForDate(type,iso);
+}
+
 function openAdd(type){openModal();showForm(type)}
 function showForm(type,item={}){
   document.getElementById('typeGrid').classList.add('hidden');
@@ -1799,7 +1924,14 @@ function importData(file){
 }
 
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
-document.getElementById('fab').addEventListener('click',openModal);
+document.getElementById('fab').addEventListener('click',e=>{
+  e.stopPropagation();
+  toggleQuickAddMenu();
+});
+document.querySelectorAll('[data-quick-type]').forEach(b=>b.addEventListener('click',()=>quickAdd(b.dataset.quickType)));
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.quick-add-wrap'))closeQuickAddMenu();
+});
 document.getElementById('closeModal').addEventListener('click',closeModal);
 document.getElementById('cancelBtn').addEventListener('click',closeModal);
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
