@@ -356,22 +356,38 @@ function slotValue(start,end){return start&&end?`${start}|${end}`:''}
 function lessonTypeLabel(x){return x.lessonType==='Інше'?(x.lessonTypeCustom||'Інше'):(x.lessonType||'—')}
 
 const planLessonTypes=lessonTypes.filter(t=>t!=='Інше');
+const schedulePlanTypes=['Лекція','Практичне','Лабораторне','Семінар','Індивідуальне','Консультація','Репетиція'];
 
 function normalizeText(v=''){
   return String(v).trim().toLocaleLowerCase('uk');
 }
 
-function planUnitLabel(plan){
-  return plan.unit==='hours'?'акад. год.':'занять';
-}
+function normalizeDisciplinePlan(raw={}){
+  const p={...raw};
 
-function planCredit(plan){
-  return plan.unit==='hours'?2:1;
+  if(!Array.isArray(p.scheduleRequirements)){
+    const oldUnit=p.unit||'lessons';
+    p.scheduleRequirements=(p.requirements||[])
+      .filter(r=>Number(r.amount)>0)
+      .map(r=>({
+        type:r.type,
+        hours:oldUnit==='hours' ? Number(r.amount)||0 : (Number(r.amount)||0)*2
+      }));
+  }
+
+  p.nonPairWorkload=Array.isArray(p.nonPairWorkload)?p.nonPairWorkload:[];
+  p.extraWorkload=Array.isArray(p.extraWorkload)?p.extraWorkload:[];
+  p.studentCount=Number(p.studentCount)||0;
+  p.courseTotalHours=Number(p.courseTotalHours)||0;
+  p.selfStudyHours=Number(p.selfStudyHours)||0;
+  p.credits=Number(p.credits)||0;
+  return p;
 }
 
 function disciplinePlansForSemester(key=selectedSemester){
   return (state.disciplinePlans||[])
     .filter(p=>p.semesterKey===key)
+    .map(normalizeDisciplinePlan)
     .sort((a,b)=>(a.subject+a.group).localeCompare(b.subject+b.group,'uk'));
 }
 
@@ -396,64 +412,138 @@ function classesForPlan(plan){
     .sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
 }
 
-function planStats(plan){
+function workloadHours(item,defaultStudents=0){
+  const calc=item?.calc||'fixed';
+  const value=Number(item?.value)||0;
+  if(calc==='perStudent'){
+    const students=Number(item?.students)||Number(defaultStudents)||0;
+    return value*students;
+  }
+  return value;
+}
+
+function workloadFormula(item,defaultStudents=0){
+  const hours=workloadHours(item,defaultStudents);
+  if((item?.calc||'fixed')==='perStudent'){
+    const students=Number(item?.students)||Number(defaultStudents)||0;
+    return `${Number(item.value)||0} год × ${students} студ. = ${formatHours(hours)} год`;
+  }
+  return `${formatHours(hours)} год`;
+}
+
+function formatHours(v){
+  const n=Number(v)||0;
+  return Number.isInteger(n)?String(n):n.toFixed(2).replace(/0+$/,'').replace(/\.$/,'');
+}
+
+function formatPairsFromHours(hours){
+  const p=(Number(hours)||0)/2;
+  return Number.isInteger(p)?String(p):p.toFixed(1).replace(/\.0$/,'');
+}
+
+function planStats(rawPlan){
+  const plan=normalizeDisciplinePlan(rawPlan);
   const items=classesForPlan(plan);
-  const credit=planCredit(plan);
+
+  const scheduleReq=(plan.scheduleRequirements||[]).filter(r=>Number(r.hours)>0);
+  const scheduleKeys=new Set(scheduleReq.map(r=>normalizeText(r.type)));
+  const nonPairKeys=new Set((plan.nonPairWorkload||[]).map(r=>normalizeText(r.label)));
+  const extraKeys=new Set((plan.extraWorkload||[]).map(r=>normalizeText(r.label)));
+
   const scheduledByType={};
   const datesByType={};
+  const nonPairCalendarByType={};
+  const extraCalendarByType={};
+  const uncategorizedItems=[];
 
   items.forEach(x=>{
     const type=lessonTypeLabel(x);
     const key=normalizeText(type);
-    scheduledByType[key]=(scheduledByType[key]||0)+credit;
-    if(!datesByType[key])datesByType[key]=[];
-    datesByType[key].push(x);
+
+    if(scheduleKeys.has(key)){
+      scheduledByType[key]=(scheduledByType[key]||0)+2;
+      if(!datesByType[key])datesByType[key]=[];
+      datesByType[key].push(x);
+    }else if(nonPairKeys.has(key)){
+      if(!nonPairCalendarByType[key])nonPairCalendarByType[key]=[];
+      nonPairCalendarByType[key].push(x);
+    }else if(extraKeys.has(key)){
+      if(!extraCalendarByType[key])extraCalendarByType[key]=[];
+      extraCalendarByType[key].push(x);
+    }else{
+      uncategorizedItems.push(x);
+    }
   });
 
-  const requirements=(plan.requirements||[]).filter(r=>Number(r.amount)>0);
-  const rows=requirements.map(r=>{
+  const rows=scheduleReq.map(r=>{
     const key=normalizeText(r.type);
-    const planned=Number(r.amount)||0;
-    const scheduled=scheduledByType[key]||0;
+    const plannedHours=Number(r.hours)||0;
+    const scheduledHours=scheduledByType[key]||0;
     return {
       type:r.type,
-      planned,
-      scheduled,
-      left:Math.max(0,planned-scheduled),
-      over:Math.max(0,scheduled-planned),
+      plannedHours,
+      scheduledHours,
+      plannedPairs:plannedHours/2,
+      scheduledPairs:scheduledHours/2,
+      leftHours:Math.max(0,plannedHours-scheduledHours),
+      overHours:Math.max(0,scheduledHours-plannedHours),
       items:datesByType[key]||[]
     };
   });
 
-  Object.entries(scheduledByType).forEach(([key,scheduled])=>{
-    if(rows.some(r=>normalizeText(r.type)===key))return;
-    const sample=items.find(x=>normalizeText(lessonTypeLabel(x))===key);
-    rows.push({
-      type:sample?lessonTypeLabel(sample):key,
-      planned:0,
-      scheduled,
-      left:0,
-      over:scheduled,
-      items:datesByType[key]||[],
-      unplanned:true
-    });
+  const nonPairRows=(plan.nonPairWorkload||[]).filter(x=>(x.label||'').trim()).map(item=>{
+    const key=normalizeText(item.label);
+    return {
+      ...item,
+      hours:workloadHours(item,plan.studentCount),
+      calendarItems:nonPairCalendarByType[key]||[]
+    };
   });
 
-  const plannedTotal=Number(plan.total)||requirements.reduce((s,r)=>s+Number(r.amount||0),0);
-  const scheduledTotal=items.length*credit;
-  const missing=rows.reduce((s,r)=>s+r.left,0);
-  const over=rows.reduce((s,r)=>s+r.over,0);
+  const extraRows=(plan.extraWorkload||[]).filter(x=>(x.label||'').trim()).map(item=>{
+    const key=normalizeText(item.label);
+    return {
+      ...item,
+      hours:workloadHours(item,plan.studentCount),
+      calendarItems:extraCalendarByType[key]||[]
+    };
+  });
+
+  const plannedScheduleHours=rows.reduce((s,r)=>s+r.plannedHours,0);
+  const scheduledScheduleHours=rows.reduce((s,r)=>s+r.scheduledHours,0);
+  const missingScheduleHours=rows.reduce((s,r)=>s+r.leftHours,0);
+  const overScheduleHours=rows.reduce((s,r)=>s+r.overHours,0);
+  const nonPairTotal=nonPairRows.reduce((s,r)=>s+r.hours,0);
+  const extraTotal=extraRows.reduce((s,r)=>s+r.hours,0);
 
   let status='missing';
-  if(over>0)status='over';
-  else if(missing===0 && scheduledTotal===plannedTotal)status='complete';
+  if(overScheduleHours>0 || uncategorizedItems.length>0)status='attention';
+  else if(missingScheduleHours===0)status='complete';
 
-  return {plan,items,rows,plannedTotal,scheduledTotal,missing,over,status};
+  return {
+    plan,
+    items,
+    rows,
+    nonPairRows,
+    extraRows,
+    uncategorizedItems,
+    plannedScheduleHours,
+    scheduledScheduleHours,
+    plannedPairs:plannedScheduleHours/2,
+    scheduledPairs:scheduledScheduleHours/2,
+    missingScheduleHours,
+    overScheduleHours,
+    nonPairTotal,
+    extraTotal,
+    officialTeacherLoad:plannedScheduleHours+nonPairTotal,
+    actualWithExtra:plannedScheduleHours+nonPairTotal+extraTotal,
+    status
+  };
 }
 
 function planStatusLabel(stats){
-  if(stats.status==='complete')return 'УСЕ ВИСТАВЛЕНО';
-  if(stats.status==='over')return 'Є ПЕРЕВИЩЕННЯ';
+  if(stats.status==='complete')return 'РОЗКЛАД ЗАКРИТО';
+  if(stats.status==='attention')return 'ПОТРЕБУЄ ПЕРЕВІРКИ';
   return 'ЩЕ НЕ ВСЕ ВИСТАВЛЕНО';
 }
 
@@ -461,20 +551,25 @@ function matchingPlanForClass(x){
   if(!x)return null;
   if(x.disciplinePlanId){
     const direct=(state.disciplinePlans||[]).find(p=>p.id===x.disciplinePlanId);
-    if(direct)return direct;
+    if(direct)return normalizeDisciplinePlan(direct);
   }
   if(!x.date)return null;
 
-  return (state.disciplinePlans||[]).find(p=>{
-    const s=planSemesterRange(p);
+  const found=(state.disciplinePlans||[]).find(p=>{
+    const np=normalizeDisciplinePlan(p);
+    const s=planSemesterRange(np);
     return x.date>=s.start && x.date<=s.end &&
-      normalizeText(x.subject)===normalizeText(p.subject) &&
-      normalizeText(x.group)===normalizeText(p.group);
-  })||null;
+      normalizeText(x.subject)===normalizeText(np.subject) &&
+      normalizeText(x.group)===normalizeText(np.group);
+  });
+  return found?normalizeDisciplinePlan(found):null;
 }
 
 function classDisciplinePlanSelect(x={}){
-  const plans=(state.disciplinePlans||[]).map(p=>({p,stats:planStats(p)}));
+  const plans=(state.disciplinePlans||[])
+    .map(p=>normalizeDisciplinePlan(p))
+    .map(p=>({p,stats:planStats(p)}));
+
   if(!plans.length)return '';
 
   const matched=matchingPlanForClass(x);
@@ -486,17 +581,18 @@ function classDisciplinePlanSelect(x={}){
       <option value="">Без прив’язки до плану</option>
       ${plans.map(({p,stats})=>`
         <option value="${esc(p.id)}" ${p.id===currentId?'selected':''}>
-          ${esc(p.group)} · ${esc(p.subject)} · ${stats.scheduledTotal}/${stats.plannedTotal} ${planUnitLabel(p)}
+          ${esc(p.group)} · ${esc(p.subject)} · ${formatPairsFromHours(stats.scheduledScheduleHours)}/${formatPairsFromHours(stats.plannedScheduleHours)} пар
         </option>`).join('')}
     </select>
-    <small>При виборі плану група й дисципліна підставляються автоматично.</small>
+    <small>План контролює лише години, які реально мають бути виставлені в розклад.</small>
   </div>`;
 }
 
 function applyDisciplinePlanToClass(id){
   if(!id)return;
-  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
-  if(!plan)return;
+  const raw=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(!raw)return;
+  const plan=normalizeDisciplinePlan(raw);
   const group=document.querySelector('[name="group"]');
   const subject=document.querySelector('[name="subject"]');
   if(group)group.value=plan.group||'';
@@ -505,25 +601,30 @@ function applyDisciplinePlanToClass(id){
 
 function resolveDisciplinePlanForData(data){
   if(data.disciplinePlanId){
-    return (state.disciplinePlans||[]).find(p=>p.id===data.disciplinePlanId)||null;
+    const raw=(state.disciplinePlans||[]).find(p=>p.id===data.disciplinePlanId);
+    return raw?normalizeDisciplinePlan(raw):null;
   }
   if(!data.date)return null;
-  return (state.disciplinePlans||[]).find(p=>{
-    const s=planSemesterRange(p);
+
+  const raw=(state.disciplinePlans||[]).find(p=>{
+    const np=normalizeDisciplinePlan(p);
+    const s=planSemesterRange(np);
     return data.date>=s.start && data.date<=s.end &&
-      normalizeText(data.subject)===normalizeText(p.subject) &&
-      normalizeText(data.group)===normalizeText(p.group);
-  })||null;
+      normalizeText(data.subject)===normalizeText(np.subject) &&
+      normalizeText(data.group)===normalizeText(np.group);
+  });
+  return raw?normalizeDisciplinePlan(raw):null;
 }
 
 function attachMatchingClassesToPlan(plan){
-  const s=planSemesterRange(plan);
+  const p=normalizeDisciplinePlan(plan);
+  const s=planSemesterRange(p);
   state.classes.forEach(x=>{
     if(x.disciplinePlanId)return;
     if(x.date>=s.start && x.date<=s.end &&
-      normalizeText(x.subject)===normalizeText(plan.subject) &&
-      normalizeText(x.group)===normalizeText(plan.group)){
-      x.disciplinePlanId=plan.id;
+      normalizeText(x.subject)===normalizeText(p.subject) &&
+      normalizeText(x.group)===normalizeText(p.group)){
+      x.disciplinePlanId=p.id;
     }
   });
 }
@@ -538,62 +639,209 @@ function planSemesterSelect(x={}){
   </div>`;
 }
 
-function planRequirementsMarkup(x={}){
-  const existing={};
-  (x.requirements||[]).forEach(r=>existing[normalizeText(r.type)]=Number(r.amount)||0);
-  const custom=(x.requirements||[]).find(r=>!planLessonTypes.some(t=>normalizeText(t)===normalizeText(r.type)));
-
-  return `<div class="field full plan-requirements-field">
-    <label>Види занять за навчальним планом</label>
-    <div class="plan-requirements-head">
-      <span>Вид заняття</span><span>Кількість</span>
-    </div>
-    <div class="plan-requirements-list">
-      ${planLessonTypes.map((t,i)=>`
-        <div class="plan-requirement-row">
-          <span>${esc(t)}</span>
-          <input type="number" min="0" step="1" name="planReq_${i}" value="${existing[normalizeText(t)]||''}" placeholder="0" oninput="updatePlanDistribution()">
-        </div>`).join('')}
-      <div class="plan-requirement-row custom">
-        <input type="text" name="customPlanType" value="${esc(custom?.type||'')}" placeholder="Свій вид заняття">
-        <input type="number" min="0" step="1" name="customPlanAmount" value="${custom?.amount||''}" placeholder="0" oninput="updatePlanDistribution()">
-      </div>
-    </div>
-    <div class="plan-distribution" id="planDistribution"></div>
+function disciplineNameField(x={}){
+  return `<div class="field full">
+    <label>Назва дисципліни</label>
+    <input name="subject" type="text" list="disciplineNameSuggestions" value="${esc(x.subject||'')}" placeholder="Назва дисципліни" required>
+    <datalist id="disciplineNameSuggestions">
+      <option value="Режисура естради і шоу">
+      <option value="Драматургія естради">
+    </datalist>
   </div>`;
 }
 
-function updatePlanDistribution(){
-  const form=document.getElementById('entryForm');
-  if(!form)return;
-  const total=Number(form.querySelector('[name="planTotal"]')?.value)||0;
-  let distributed=0;
-  planLessonTypes.forEach((t,i)=>{
-    distributed+=Number(form.querySelector(`[name="planReq_${i}"]`)?.value)||0;
-  });
-  distributed+=Number(form.querySelector('[name="customPlanAmount"]')?.value)||0;
+function scheduleRequirementsMarkup(raw={}){
+  const x=normalizeDisciplinePlan(raw);
+  const existing={};
+  (x.scheduleRequirements||[]).forEach(r=>existing[normalizeText(r.type)]=Number(r.hours)||0);
+  const custom=(x.scheduleRequirements||[]).find(r=>!schedulePlanTypes.some(t=>normalizeText(t)===normalizeText(r.type)));
 
-  const el=document.getElementById('planDistribution');
-  if(!el)return;
-  const diff=total-distributed;
-  el.className=`plan-distribution ${diff===0&&total>0?'ok':diff<0?'over':'missing'}`;
-  el.innerHTML=total
-    ?`Розподілено <b>${distributed}</b> із <b>${total}</b>. ${diff===0?'Все збігається ✓':diff>0?`Ще розподілити: ${diff}`:`Перевищено на: ${Math.abs(diff)}`}`
-    :'Вкажіть загальний обсяг дисципліни.';
+  return `<div class="field full workload-section schedule-section">
+    <div class="workload-section-head">
+      <div>
+        <span class="workload-step">1</span>
+        <div><b>Години, які треба виставити в розклад</b>
+        <small>Тільки тут діє правило: 2 академічні години = 1 пара.</small></div>
+      </div>
+    </div>
+    <div class="schedule-hours-table">
+      <div class="schedule-hours-head"><span>Вид заняття</span><span>Годин</span><span>Пар</span></div>
+      ${schedulePlanTypes.map((t,i)=>`
+        <div class="schedule-hours-row">
+          <span>${esc(t)}</span>
+          <input name="scheduleHours_${i}" type="number" min="0" step="0.5" value="${existing[normalizeText(t)]||''}" placeholder="0" oninput="updatePlanWorkloadSummary()">
+          <strong data-pairs-for="scheduleHours_${i}">${existing[normalizeText(t)]?formatPairsFromHours(existing[normalizeText(t)]):'0'}</strong>
+        </div>`).join('')}
+      <div class="schedule-hours-row custom">
+        <input name="customScheduleType" type="text" value="${esc(custom?.type||'')}" placeholder="Свій вид заняття">
+        <input name="customScheduleHours" type="number" min="0" step="0.5" value="${custom?.hours||''}" placeholder="0" oninput="updatePlanWorkloadSummary()">
+        <strong id="customSchedulePairs">${custom?.hours?formatPairsFromHours(custom.hours):'0'}</strong>
+      </div>
+    </div>
+  </div>`;
 }
 
-function disciplinePlanForm(x={}){
-  return `<div class="form-grid">
-    ${inputField('subject','Назва дисципліни','text',x.subject,'Режисура естради і шоу',true,true)}
+function workloadRowHTML(kind,item={}){
+  const prefix=kind==='nonPair'?'nonPair':'extra';
+  const calc=item.calc||'fixed';
+  const students=Number(item.students)||0;
+  const value=item.value??'';
+
+  return `<div class="workload-row" data-kind="${prefix}">
+    <input class="workload-label-input" name="${prefix}Label" type="text" value="${esc(item.label||'')}" placeholder="${kind==='nonPair'?'Напр. Іспит':'Напр. Додаткова консультація'}" oninput="updatePlanWorkloadSummary()">
+    <select name="${prefix}Calc" onchange="updateWorkloadRow(this.closest('.workload-row'));updatePlanWorkloadSummary()">
+      <option value="fixed" ${calc==='fixed'?'selected':''}>Фіксовані години</option>
+      <option value="perStudent" ${calc==='perStudent'?'selected':''}>Норма × контингент</option>
+    </select>
+    <input name="${prefix}Value" type="number" min="0" step="0.01" value="${esc(value)}" placeholder="${calc==='perStudent'?'год./студ.':'годин'}" oninput="updateWorkloadRow(this.closest('.workload-row'));updatePlanWorkloadSummary()">
+    <input class="workload-students ${calc==='perStudent'?'':'hidden'}" name="${prefix}Students" type="number" min="0" step="1" value="${students||''}" placeholder="контингент" oninput="updateWorkloadRow(this.closest('.workload-row'));updatePlanWorkloadSummary()">
+    <span class="workload-row-result">0 год</span>
+    <button type="button" class="workload-remove" onclick="this.closest('.workload-row').remove();updatePlanWorkloadSummary()">×</button>
+  </div>`;
+}
+
+function workloadRowsMarkup(kind,items=[]){
+  const prefix=kind==='nonPair'?'nonPair':'extra';
+  const title=kind==='nonPair'
+    ?'Нормативні години, які не є парами'
+    :'Додаткові години поза навчальним планом';
+  const help=kind==='nonPair'
+    ?'Залік, іспит, контрольні роботи та інше. Можна задати фіксовані години або норму на одного студента.'
+    :'Те, що ти реально робиш, але воно не входить в офіційний навчальний план. Рахується окремо.';
+  const step=kind==='nonPair'?'2':'3';
+
+  return `<div class="field full workload-section ${prefix}-section">
+    <div class="workload-section-head">
+      <div>
+        <span class="workload-step">${step}</span>
+        <div><b>${title}</b><small>${help}</small></div>
+      </div>
+    </div>
+
+    ${kind==='nonPair'?`<div class="workload-presets">
+      <span>Швидко додати:</span>
+      <button type="button" onclick="appendWorkloadRow('nonPair','Залік','perStudent')">Залік</button>
+      <button type="button" onclick="appendWorkloadRow('nonPair','Іспит','perStudent')">Іспит</button>
+      <button type="button" onclick="appendWorkloadRow('nonPair','Контрольна робота','perStudent')">Контрольна робота</button>
+    </div>`:''}
+
+    <div class="workload-table-head">
+      <span>Що рахуємо</span><span>Спосіб</span><span>Норма / години</span><span>Контингент</span><span>Разом</span><span></span>
+    </div>
+    <div class="workload-rows" id="${prefix}Rows">
+      ${(items||[]).map(item=>workloadRowHTML(kind,item)).join('')}
+    </div>
+    <button type="button" class="add-workload-row" onclick="appendWorkloadRow('${kind}')">＋ Додати рядок</button>
+  </div>`;
+}
+
+function appendWorkloadRow(kind,label='',calc='fixed'){
+  const prefix=kind==='nonPair'?'nonPair':'extra';
+  const host=document.getElementById(`${prefix}Rows`);
+  if(!host)return;
+  host.insertAdjacentHTML('beforeend',workloadRowHTML(kind,{label,calc}));
+  updateWorkloadRow(host.lastElementChild);
+  updatePlanWorkloadSummary();
+}
+
+function updateWorkloadRow(row){
+  if(!row)return;
+  const kind=row.dataset.kind;
+  const calc=row.querySelector(`[name="${kind}Calc"]`)?.value||'fixed';
+  const value=Number(row.querySelector(`[name="${kind}Value"]`)?.value)||0;
+  const studentInput=row.querySelector(`[name="${kind}Students"]`);
+  const defaultStudents=Number(document.querySelector('[name="studentCount"]')?.value)||0;
+  if(studentInput)studentInput.classList.toggle('hidden',calc!=='perStudent');
+  const students=Number(studentInput?.value)||defaultStudents;
+  const result=calc==='perStudent'?value*students:value;
+  const resultEl=row.querySelector('.workload-row-result');
+  if(resultEl)resultEl.textContent=`${formatHours(result)} год`;
+}
+
+function workloadRowsTotal(prefix){
+  let total=0;
+  document.querySelectorAll(`#${prefix}Rows .workload-row`).forEach(row=>{
+    const calc=row.querySelector(`[name="${prefix}Calc"]`)?.value||'fixed';
+    const value=Number(row.querySelector(`[name="${prefix}Value"]`)?.value)||0;
+    const defaultStudents=Number(document.querySelector('[name="studentCount"]')?.value)||0;
+    const students=Number(row.querySelector(`[name="${prefix}Students"]`)?.value)||defaultStudents;
+    total+=calc==='perStudent'?value*students:value;
+  });
+  return total;
+}
+
+function updatePlanWorkloadSummary(){
+  const form=document.getElementById('entryForm');
+  if(!form)return;
+
+  let scheduleHours=0;
+  schedulePlanTypes.forEach((t,i)=>{
+    const input=form.querySelector(`[name="scheduleHours_${i}"]`);
+    const hours=Number(input?.value)||0;
+    scheduleHours+=hours;
+    const pairs=form.querySelector(`[data-pairs-for="scheduleHours_${i}"]`);
+    if(pairs)pairs.textContent=formatPairsFromHours(hours);
+  });
+
+  const customHours=Number(form.querySelector('[name="customScheduleHours"]')?.value)||0;
+  scheduleHours+=customHours;
+  const customPairs=document.getElementById('customSchedulePairs');
+  if(customPairs)customPairs.textContent=formatPairsFromHours(customHours);
+
+  document.querySelectorAll('.workload-row').forEach(updateWorkloadRow);
+  const nonPair=workloadRowsTotal('nonPair');
+  const extra=workloadRowsTotal('extra');
+
+  const host=document.getElementById('planWorkloadSummary');
+  if(!host)return;
+
+  host.innerHTML=`
+    <div><small>У РОЗКЛАД</small><b>${formatHours(scheduleHours)} год</b><span>${formatPairsFromHours(scheduleHours)} пар</span></div>
+    <div><small>ІНШЕ НОРМАТИВНЕ</small><b>${formatHours(nonPair)} год</b><span>не ділиться на пари</span></div>
+    <div><small>ДОДАТКОВО</small><b>${formatHours(extra)} год</b><span>поза планом</span></div>
+    <div><small>ПЕДАГОГІЧНЕ НАВАНТАЖЕННЯ</small><b>${formatHours(scheduleHours+nonPair)} год</b><span>+ ${formatHours(extra)} додатково</span></div>`;
+}
+
+function parseWorkloadRows(formData,prefix){
+  const labels=formData.getAll(`${prefix}Label`);
+  const calcs=formData.getAll(`${prefix}Calc`);
+  const values=formData.getAll(`${prefix}Value`);
+  const students=formData.getAll(`${prefix}Students`);
+
+  return labels.map((label,i)=>({
+    label:String(label||'').trim(),
+    calc:calcs[i]||'fixed',
+    value:Number(values[i])||0,
+    students:Number(students[i])||0
+  })).filter(x=>x.label && x.value>0);
+}
+
+function disciplinePlanForm(raw={}){
+  const x=normalizeDisciplinePlan(raw);
+
+  return `<div class="form-grid discipline-plan-form">
+    ${disciplineNameField(x)}
     ${inputField('group','Група','text',x.group,'РЕМС-44',false,true)}
     ${planSemesterSelect(x)}
-    ${selectField('planUnit','Рахувати у',['Заняття (пари)','Академічні години'],x.unit==='hours'?'Академічні години':'Заняття (пари)')}
-    ${inputField('planTotal','Загальний обсяг','number',x.total||'','Наприклад, 18',false,true)}
-    <div class="field plan-unit-help">
-      <label>Як рахується</label>
-      <div>Якщо вибрано академічні години, одна стандартна пара = <b>2 академічні години</b>.</div>
+    ${inputField('studentCount','Контингент студентів','number',x.studentCount||'','Наприклад, 24')}
+    ${inputField('credits','Кредити (довідково)','number',x.credits||'','Наприклад, 3')}
+    ${inputField('courseTotalHours','Загальний обсяг дисципліни, год. (довідково)','number',x.courseTotalHours||'','Наприклад, 90')}
+    ${inputField('selfStudyHours','Самостійна робота студентів, год. (довідково)','number',x.selfStudyHours||'','Наприклад, 30')}
+
+    <div class="field plan-reference-note">
+      <label>Важливо</label>
+      <div>Ці довідкові години <b>не зобов’язані збігатися</b> з кількістю пар. Контроль розкладу ведеться тільки за блоком №1 нижче.</div>
     </div>
-    ${planRequirementsMarkup(x)}
+
+    ${scheduleRequirementsMarkup(x)}
+    ${workloadRowsMarkup('nonPair',x.nonPairWorkload)}
+    ${workloadRowsMarkup('extra',x.extraWorkload)}
+
+    <div class="field full plan-workload-summary-wrap">
+      <label>Підсумок</label>
+      <div class="plan-workload-summary" id="planWorkloadSummary"></div>
+    </div>
+
     ${textareaField('planNotes','Нотатка до дисципліни',x.notes||'')}
   </div>`;
 }
@@ -604,8 +852,8 @@ function openDisciplinePlanForm(plan={}){
 }
 
 function editDisciplinePlan(id){
-  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
-  if(plan)openDisciplinePlanForm(plan);
+  const raw=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(raw)openDisciplinePlanForm(normalizeDisciplinePlan(raw));
 }
 
 function deleteDisciplinePlan(id){
@@ -620,8 +868,9 @@ function deleteDisciplinePlan(id){
 }
 
 function addClassFromPlan(id,date=''){
-  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
-  if(!plan)return;
+  const raw=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(!raw)return;
+  const plan=normalizeDisciplinePlan(raw);
   openModal();
   showForm('class',{
     disciplinePlanId:plan.id,
@@ -630,6 +879,7 @@ function addClassFromPlan(id,date=''){
     date:date||activeQuickDate()
   });
 }
+
 function lessonSlotSelect(x){
   const current=slotValue(x.time,x.end);
   const exact=lessonSlots.some(([s,e])=>slotValue(s,e)===current);
@@ -1706,11 +1956,10 @@ function renderDisciplines(){
   const stats=plans.map(planStats);
 
   if(selectedDisciplineKey){
-    const plan=(state.disciplinePlans||[]).find(p=>p.id===selectedDisciplineKey);
-    if(plan){
+    const raw=(state.disciplinePlans||[]).find(p=>p.id===selectedDisciplineKey);
+    if(raw){
+      const plan=normalizeDisciplinePlan(raw);
       const s=planStats(plan);
-      const percent=s.plannedTotal?Math.min(100,Math.round(s.scheduledTotal/s.plannedTotal*100)):0;
-      const unit=planUnitLabel(plan);
 
       host.innerHTML=`
         <div class="discipline-detail-head">
@@ -1718,7 +1967,7 @@ function renderDisciplines(){
           <div class="discipline-detail-title">
             <span>${esc(semesterInfo(plan.semesterKey).label)}</span>
             <h2>${esc(plan.subject)}</h2>
-            <p>${esc(plan.group)} · план: ${plan.total} ${unit}</p>
+            <p>${esc(plan.group)}${plan.studentCount?` · ${plan.studentCount} студентів`:''}</p>
           </div>
           <div class="discipline-detail-actions-top">
             <button onclick="editDisciplinePlan('${plan.id}')">Редагувати план</button>
@@ -1728,63 +1977,103 @@ function renderDisciplines(){
 
         <div class="plan-health ${s.status}">
           <div>
-            <small>СТАН РОЗКЛАДУ</small>
+            <small>КОНТРОЛЬ РОЗКЛАДУ</small>
             <b>${planStatusLabel(s)}</b>
-            <span>${s.scheduledTotal} із ${s.plannedTotal} ${unit} уже виставлено</span>
+            <span>${formatPairsFromHours(s.scheduledScheduleHours)} із ${formatPairsFromHours(s.plannedScheduleHours)} пар уже виставлено</span>
           </div>
           <div class="plan-health-number">
-            <strong>${s.status==='complete'?'✓':s.status==='over'?`+${s.over}`:s.missing}</strong>
-            <small>${s.status==='complete'?'готово':s.status==='over'?'перевищення':'ще потрібно'}</small>
+            <strong>${s.status==='complete'?'✓':s.status==='attention'?'!':formatPairsFromHours(s.missingScheduleHours)}</strong>
+            <small>${s.status==='complete'?'готово':s.status==='attention'?'перевірити':'пар ще'}</small>
           </div>
         </div>
 
-        <div class="discipline-progress-card">
-          <div>
-            <b>Заповнення розкладу</b>
-            <small>${s.scheduledTotal} із ${s.plannedTotal} ${unit}</small>
-          </div>
-          <div class="discipline-progress-track"><span style="width:${percent}%"></span></div>
-          <strong>${percent}%</strong>
+        <div class="discipline-load-summary">
+          <div><small>У РОЗКЛАД ЗА ПЛАНОМ</small><b>${formatHours(s.plannedScheduleHours)} год</b><span>${formatPairsFromHours(s.plannedScheduleHours)} пар</span></div>
+          <div><small>ВЖЕ ВИСТАВЛЕНО</small><b>${formatHours(s.scheduledScheduleHours)} год</b><span>${formatPairsFromHours(s.scheduledScheduleHours)} пар</span></div>
+          <div><small>ІНШЕ НОРМАТИВНЕ</small><b>${formatHours(s.nonPairTotal)} год</b><span>не перетворюється на пари</span></div>
+          <div><small>ДОДАТКОВО ПОЗА ПЛАНОМ</small><b>${formatHours(s.extraTotal)} год</b><span>рахується окремо</span></div>
         </div>
+
+        ${(plan.courseTotalHours||plan.credits||plan.selfStudyHours)?`
+          <div class="plan-reference-strip">
+            ${plan.credits?`<span><b>${formatHours(plan.credits)}</b> кредитів</span>`:''}
+            ${plan.courseTotalHours?`<span><b>${formatHours(plan.courseTotalHours)}</b> год загальний обсяг</span>`:''}
+            ${plan.selfStudyHours?`<span><b>${formatHours(plan.selfStudyHours)}</b> год самостійної роботи</span>`:''}
+          </div>`:''}
 
         <div class="requirements-card">
           <div class="requirements-head">
-            <div>
-              <div class="small-label">НАВЧАЛЬНИЙ ПЛАН</div>
-              <h3>Види занять</h3>
-            </div>
-            <span>Кожен вид контролюється окремо</span>
+            <div><div class="small-label">ЩО МАЄ БУТИ В РОЗКЛАДІ</div><h3>Аудиторні / розкладні заняття</h3></div>
+            <span>Тут 2 академічні години = 1 пара</span>
           </div>
           <div class="requirements-table">
-            ${s.rows.map(r=>{
-              const cls=r.over>0?'over':r.left>0?'missing':'done';
-              return `<div class="requirement-row ${cls}">
-                <div class="requirement-type">
-                  <b>${esc(r.type)}</b>
-                  ${r.unplanned?'<small>Цього виду немає в плані</small>':''}
-                </div>
-                <div class="requirement-number"><small>ПЛАН</small><b>${r.planned}</b></div>
-                <div class="requirement-number"><small>В РОЗКЛАДІ</small><b>${r.scheduled}</b></div>
-                <div class="requirement-number result">
-                  <small>${r.over?'ПЕРЕВИЩЕНО':'ЗАЛИШИЛОСЯ'}</small>
-                  <b>${r.over?`+${r.over}`:r.left}</b>
-                </div>
+            ${s.rows.length?s.rows.map(r=>{
+              const cls=r.overHours>0?'over':r.leftHours>0?'missing':'done';
+              return `<div class="requirement-row v22 ${cls}">
+                <div class="requirement-type"><b>${esc(r.type)}</b></div>
+                <div class="requirement-number"><small>ПЛАН</small><b>${formatHours(r.plannedHours)} год</b><span>${formatPairsFromHours(r.plannedHours)} пар</span></div>
+                <div class="requirement-number"><small>В РОЗКЛАДІ</small><b>${formatHours(r.scheduledHours)} год</b><span>${formatPairsFromHours(r.scheduledHours)} пар</span></div>
+                <div class="requirement-number result"><small>${r.overHours?'ПЕРЕВИЩЕНО':'ЗАЛИШИЛОСЯ'}</small><b>${r.overHours?`+${formatHours(r.overHours)}`:formatHours(r.leftHours)} год</b><span>${formatPairsFromHours(r.overHours||r.leftHours)} пар</span></div>
                 <div class="requirement-dates">
                   ${r.items.length
-                    ?r.items.map(x=>`<button onclick="openDay('${x.date}')">${fmtShort(x.date)} · ${pairNumber(x.time,x.end)}</button>`).join('')
+                    ?r.items.map(x=>`<button onclick="openDay('${x.date}')">${fmtShort(x.date)} · ${pairNumber(x.time,x.end)} · ауд. ${esc(x.room||'—')}</button>`).join('')
                     :'<span>Ще не виставлено</span>'}
                 </div>
               </div>`;
-            }).join('')}
+            }).join(''):`<div class="workload-empty">Для цієї дисципліни не задано годин, які треба ставити в розклад.</div>`}
           </div>
         </div>
 
+        ${s.nonPairRows.length?`
+          <div class="nonpair-card">
+            <div class="requirements-head">
+              <div><div class="small-label">НЕ Є ПАРАМИ</div><h3>Інше нормативне навантаження</h3></div>
+              <strong>${formatHours(s.nonPairTotal)} год</strong>
+            </div>
+            <div class="nonpair-list">
+              ${s.nonPairRows.map(r=>`
+                <div class="nonpair-row">
+                  <div><b>${esc(r.label)}</b><small>${esc(workloadFormula(r,plan.studentCount))}</small></div>
+                  <strong>${formatHours(r.hours)} год</strong>
+                  <div class="nonpair-dates">
+                    ${r.calendarItems.length
+                      ?r.calendarItems.map(x=>`<button onclick="openDay('${x.date}')">${fmtShort(x.date)}</button>`).join('')
+                      :'<span>Дата в календарі не обов’язкова</span>'}
+                  </div>
+                </div>`).join('')}
+            </div>
+          </div>`:''}
+
+        ${s.extraRows.length?`
+          <div class="extra-workload-card">
+            <div class="requirements-head">
+              <div><div class="small-label">ПОЗА НАВЧАЛЬНИМ ПЛАНОМ</div><h3>Додаткове навантаження</h3></div>
+              <strong>+ ${formatHours(s.extraTotal)} год</strong>
+            </div>
+            <div class="nonpair-list">
+              ${s.extraRows.map(r=>`
+                <div class="nonpair-row extra">
+                  <div><b>${esc(r.label)}</b><small>${esc(workloadFormula(r,plan.studentCount))}</small></div>
+                  <strong>${formatHours(r.hours)} год</strong>
+                  <div class="nonpair-dates">
+                    ${r.calendarItems.length
+                      ?r.calendarItems.map(x=>`<button onclick="openDay('${x.date}')">${fmtShort(x.date)}</button>`).join('')
+                      :'<span>Рахується окремо</span>'}
+                  </div>
+                </div>`).join('')}
+            </div>
+          </div>`:''}
+
+        ${s.uncategorizedItems.length?`
+          <div class="unclassified-warning">
+            <b>Є ${s.uncategorizedItems.length} занять, тип яких не описаний у плані.</b>
+            <span>Вони є в календарі, але CONTROL не знає, до якого виду навантаження їх зарахувати.</span>
+            <div>${s.uncategorizedItems.map(x=>`<button onclick="editEntry('class','${x.id}')">${fmtShort(x.date)} · ${esc(lessonTypeLabel(x))}</button>`).join('')}</div>
+          </div>`:''}
+
         <div class="discipline-schedule-head">
-          <div>
-            <div class="small-label">РОЗКЛАД</div>
-            <h3>Де вже стоять заняття</h3>
-          </div>
-          <span>${s.items.length} у календарі</span>
+          <div><div class="small-label">УСІ ПОДІЇ ДИСЦИПЛІНИ</div><h3>Що вже є в календарі</h3></div>
+          <span>${s.items.length} записів</span>
         </div>
 
         <div class="discipline-plan">
@@ -1805,13 +2094,11 @@ function renderDisciplines(){
                 <h4>${x.topic?esc(x.topic):'<span class="missing-value">Тема ще не внесена</span>'}</h4>
                 ${x.prep?`<div class="discipline-prep"><b>Підготувати:</b> ${esc(x.prep)}</div>`:''}
               </div>
-              <div class="discipline-lesson-actions">
-                <button onclick="editEntry('class','${x.id}')">Редагувати</button>
-              </div>
+              <div class="discipline-lesson-actions"><button onclick="editEntry('class','${x.id}')">Редагувати</button></div>
             </div>`;
           }).join(''):`<div class="discipline-empty small">
-            <b>У розкладі ще немає занять.</b>
-            <span>План уже внесений. Тепер розставляй заняття — CONTROL буде автоматично віднімати їх від плану.</span>
+            <b>У календарі ще немає занять цієї дисципліни.</b>
+            <span>План уже внесено. Почни розставляти заняття — CONTROL відразу покаже, скільки залишилось.</span>
             <button class="gold-btn" onclick="addClassFromPlan('${plan.id}')">＋ Поставити перше заняття</button>
           </div>`}
         </div>
@@ -1825,7 +2112,7 @@ function renderDisciplines(){
 
   const complete=stats.filter(s=>s.status==='complete').length;
   const missing=stats.filter(s=>s.status==='missing').length;
-  const over=stats.filter(s=>s.status==='over').length;
+  const attention=stats.filter(s=>s.status==='attention').length;
 
   const unplannedGroups=disciplineGroups(selectedSemester).filter(g=>
     !plans.some(p=>
@@ -1839,7 +2126,7 @@ function renderDisciplines(){
       <div>
         <div class="small-label">НАВЧАЛЬНЕ НАВАНТАЖЕННЯ</div>
         <h2>Дисципліни</h2>
-        <p>Спочатку вносимо план дисципліни, а потім CONTROL перевіряє, чи все виставлено в розклад.</p>
+        <p>Окремо контролюємо пари в розкладі, нормативні години поза парами й додаткове навантаження.</p>
       </div>
       <div class="disciplines-toolbar-actions">
         <select onchange="setSemester(this.value)">
@@ -1851,53 +2138,64 @@ function renderDisciplines(){
 
     <div class="semester-summary plan-summary">
       <div><small>ДИСЦИПЛІН</small><b>${plans.length}</b></div>
-      <div class="summary-good"><small>УСЕ ВИСТАВЛЕНО</small><b>${complete}</b></div>
+      <div class="summary-good"><small>РОЗКЛАД ЗАКРИТО</small><b>${complete}</b></div>
       <div class="summary-warn"><small>ЩЕ НЕ ВСЕ</small><b>${missing}</b></div>
-      <div class="summary-over"><small>ПЕРЕВИЩЕННЯ</small><b>${over}</b></div>
+      <div class="summary-over"><small>ПЕРЕВІРИТИ</small><b>${attention}</b></div>
     </div>
 
     ${plans.length?`
       <div class="discipline-grid">
         ${stats.map(s=>{
           const p=s.plan;
-          const percent=s.plannedTotal?Math.min(100,Math.round(s.scheduledTotal/s.plannedTotal*100)):0;
-          const unit=planUnitLabel(p);
+          const percent=s.plannedScheduleHours
+            ?Math.min(100,Math.round(s.scheduledScheduleHours/s.plannedScheduleHours*100))
+            :100;
+
           return `<button class="discipline-card plan-card ${s.status}" onclick="openDiscipline('${encodeURIComponent(p.id)}')">
             <div class="discipline-card-top">
               <span>${esc(p.group)}</span>
               <b class="plan-status-pill ${s.status}">${planStatusLabel(s)}</b>
             </div>
             <h3>${esc(p.subject)}</h3>
-            <div class="plan-card-total"><strong>${s.scheduledTotal}</strong><span>/ ${s.plannedTotal} ${unit}</span></div>
-            <div class="discipline-card-progress"><span style="width:${percent}%"></span></div>
-            <div class="plan-card-types">
-              ${s.rows.filter(r=>r.planned>0).map(r=>`
-                <span class="${r.over?'over':r.left?'missing':'done'}">${esc(r.type)} <b>${r.scheduled}/${r.planned}</b></span>
-              `).join('')}
+
+            <div class="plan-card-total">
+              <strong>${formatPairsFromHours(s.scheduledScheduleHours)}</strong>
+              <span>/ ${formatPairsFromHours(s.plannedScheduleHours)} пар у розкладі</span>
             </div>
+            <div class="discipline-card-progress"><span style="width:${percent}%"></span></div>
+
+            <div class="plan-card-types">
+              ${s.rows.map(r=>`
+                <span class="${r.overHours?'over':r.leftHours?'missing':'done'}">
+                  ${esc(r.type)} <b>${formatPairsFromHours(r.scheduledHours)}/${formatPairsFromHours(r.plannedHours)}</b>
+                </span>`).join('')}
+            </div>
+
+            <div class="discipline-card-secondary">
+              ${s.nonPairTotal?`<span>Нормативне поза парами: <b>${formatHours(s.nonPairTotal)} год</b></span>`:''}
+              ${s.extraTotal?`<span>Додатково: <b>+${formatHours(s.extraTotal)} год</b></span>`:''}
+            </div>
+
             <div class="plan-card-message ${s.status==='complete'?'good':s.status}">
               ${s.status==='complete'
-                ?'✓ Усе навантаження вже є в розкладі'
-                :s.status==='over'
-                  ?`Перевищення: ${s.rows.filter(r=>r.over).map(r=>`${esc(r.type)} +${r.over}`).join(' · ')}`
-                  :`Залишилось: ${s.rows.filter(r=>r.left).map(r=>`${esc(r.type)} ${r.left}`).join(' · ')}`}
+                ?'✓ Усі заплановані пари вже є в розкладі'
+                :s.status==='attention'
+                  ?'Є заняття або перевищення, які треба перевірити'
+                  :`Залишилось виставити ${formatPairsFromHours(s.missingScheduleHours)} пар`}
             </div>
           </button>`;
         }).join('')}
       </div>`
       :`<div class="discipline-empty">
-        <b>Навчальний план цього семестру ще не внесено.</b>
-        <span>Створи дисципліну, вкажи загальний обсяг і розподіл за видами занять.</span>
+        <b>Навчальне навантаження цього семестру ще не внесено.</b>
+        <span>Додай дисципліну й окремо вкажи: що має бути парами, що рахується за нормативом і що є додатковим навантаженням.</span>
         <button class="gold-btn" onclick="openDisciplinePlanForm({semesterKey:'${selectedSemester}'})">＋ Додати першу дисципліну</button>
       </div>`}
 
     ${unplannedGroups.length?`
       <div class="unplanned-section">
         <div class="unplanned-head">
-          <div>
-            <div class="small-label">ПОТРЕБУЄ УВАГИ</div>
-            <h3>Заняття без навчального плану</h3>
-          </div>
+          <div><div class="small-label">ПОТРЕБУЄ УВАГИ</div><h3>Заняття без плану дисципліни</h3></div>
           <span>${unplannedGroups.length}</span>
         </div>
         ${unplannedGroups.map(g=>`
@@ -2043,7 +2341,7 @@ function showForm(type,item={}){
   document.getElementById('modalTitle').textContent=(item.id?'Редагувати · ':'Додати · ')+name;
   document.getElementById('formFields').innerHTML=formMarkup(type,item);
 
-  if(type==='disciplinePlan')setTimeout(updatePlanDistribution,0);
+  if(type==='disciplinePlan')setTimeout(()=>{document.querySelectorAll('.workload-row').forEach(updateWorkloadRow);updatePlanWorkloadSummary()},0);
 
   if(type==='class' && !item.id){
     const form=document.getElementById('entryForm');
@@ -2150,45 +2448,54 @@ function submitEntry(e){
 
   const type=document.getElementById('entryType').value;
   const id=document.getElementById('entryId').value;
-  const data=Object.fromEntries(new FormData(e.target).entries());
+  const formData=new FormData(e.target);
+  const data=Object.fromEntries(formData.entries());
 
   if(type==='disciplinePlan'){
-    const requirements=[];
-    planLessonTypes.forEach((t,i)=>{
-      const amount=Number(data[`planReq_${i}`])||0;
-      if(amount>0)requirements.push({type:t,amount});
-      delete data[`planReq_${i}`];
+    const scheduleRequirements=[];
+
+    schedulePlanTypes.forEach((t,i)=>{
+      const hours=Number(data[`scheduleHours_${i}`])||0;
+      if(hours>0)scheduleRequirements.push({type:t,hours});
     });
 
-    const customAmount=Number(data.customPlanAmount)||0;
-    const customType=(data.customPlanType||'').trim();
-    if(customAmount>0 && customType)requirements.push({type:customType,amount});
+    const customScheduleType=String(data.customScheduleType||'').trim();
+    const customScheduleHours=Number(data.customScheduleHours)||0;
+    if(customScheduleType && customScheduleHours>0){
+      scheduleRequirements.push({type:customScheduleType,hours:customScheduleHours});
+    }
 
-    const total=Number(data.planTotal)||0;
-    const sum=requirements.reduce((s,r)=>s+r.amount,0);
+    const studentCount=Number(data.studentCount)||0;
+    const nonPairWorkload=parseWorkloadRows(formData,'nonPair');
+    const extraWorkload=parseWorkloadRows(formData,'extra');
 
-    if(total<=0){
-      alert('Вкажіть загальний обсяг дисципліни.');
+    if(!String(data.subject||'').trim()){
+      alert('Вкажіть назву дисципліни.');
       return;
     }
-    if(sum!==total){
-      alert(`Сума видів занять має дорівнювати загальному обсягу. Зараз ${sum} із ${total}.`);
+    if(!String(data.group||'').trim()){
+      alert('Вкажіть групу.');
       return;
     }
 
     const planData={
-      subject:(data.subject||'').trim(),
-      group:(data.group||'').trim(),
+      subject:String(data.subject||'').trim(),
+      group:String(data.group||'').trim(),
       semesterKey:data.semesterKey,
-      unit:data.planUnit==='Академічні години'?'hours':'lessons',
-      total,
-      requirements,
+      studentCount,
+      credits:Number(data.credits)||0,
+      courseTotalHours:Number(data.courseTotalHours)||0,
+      selfStudyHours:Number(data.selfStudyHours)||0,
+      scheduleRequirements,
+      nonPairWorkload,
+      extraWorkload,
       notes:data.planNotes||''
     };
 
     if(id){
       const i=state.disciplinePlans.findIndex(p=>p.id===id);
       if(i<0)return;
+
       state.disciplinePlans[i]={...state.disciplinePlans[i],...planData,id};
 
       state.classes.forEach(x=>{
@@ -2210,6 +2517,7 @@ function submitEntry(e){
       normalizeText(p.subject)===normalizeText(planData.subject) &&
       normalizeText(p.group)===normalizeText(planData.group)
     );
+
     if(duplicate){
       alert('Для цієї дисципліни, групи й семестру план уже існує.');
       return;
