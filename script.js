@@ -2,7 +2,7 @@
 const KEY='fisher-control-v4';
 const BACKUP_KEY='fisher-control-backups-v1';
 
-const seed={classes:[],tasks:[],projects:[],notes:[],templates:[]};
+const seed={classes:[],tasks:[],projects:[],notes:[],templates:[],disciplinePlans:[]};
 const state=load();
 let currentYear=(new Date()).getFullYear();
 let selectedMonthOffset=0;
@@ -205,6 +205,14 @@ function semesterInfo(key){
 function semesterOptions(){
   const keys=new Set([semesterKeyForDate(isoToday())]);
   state.classes.forEach(x=>x.date&&keys.add(semesterKeyForDate(x.date)));
+  (state.disciplinePlans||[]).forEach(x=>x.semesterKey&&keys.add(x.semesterKey));
+
+  const now=new Date();
+  for(let y=now.getFullYear()-1;y<=now.getFullYear()+1;y++){
+    keys.add(`spring-${y}`);
+    keys.add(`autumn-${y}`);
+  }
+
   return [...keys]
     .map(semesterInfo)
     .sort((a,b)=>a.start.localeCompare(b.start));
@@ -346,6 +354,282 @@ function pairNumber(start,end){
 const lessonTypes=['Лекція','Практичне','Лабораторне','Семінар','Індивідуальне','Залік','Іспит','Консультація','Репетиція','Контрольна робота','Інше'];
 function slotValue(start,end){return start&&end?`${start}|${end}`:''}
 function lessonTypeLabel(x){return x.lessonType==='Інше'?(x.lessonTypeCustom||'Інше'):(x.lessonType||'—')}
+
+const planLessonTypes=lessonTypes.filter(t=>t!=='Інше');
+
+function normalizeText(v=''){
+  return String(v).trim().toLocaleLowerCase('uk');
+}
+
+function planUnitLabel(plan){
+  return plan.unit==='hours'?'акад. год.':'занять';
+}
+
+function planCredit(plan){
+  return plan.unit==='hours'?2:1;
+}
+
+function disciplinePlansForSemester(key=selectedSemester){
+  return (state.disciplinePlans||[])
+    .filter(p=>p.semesterKey===key)
+    .sort((a,b)=>(a.subject+a.group).localeCompare(b.subject+b.group,'uk'));
+}
+
+function planSemesterRange(plan){
+  return semesterInfo(plan.semesterKey||semesterKeyForDate(isoToday()));
+}
+
+function classMatchesPlan(x,plan){
+  if(!x || !plan || x.status==='Скасовано')return false;
+  if(x.disciplinePlanId===plan.id)return true;
+  if(x.disciplinePlanId)return false;
+
+  const s=planSemesterRange(plan);
+  return x.date>=s.start && x.date<=s.end &&
+    normalizeText(x.subject)===normalizeText(plan.subject) &&
+    normalizeText(x.group)===normalizeText(plan.group);
+}
+
+function classesForPlan(plan){
+  return state.classes
+    .filter(x=>classMatchesPlan(x,plan))
+    .sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+}
+
+function planStats(plan){
+  const items=classesForPlan(plan);
+  const credit=planCredit(plan);
+  const scheduledByType={};
+  const datesByType={};
+
+  items.forEach(x=>{
+    const type=lessonTypeLabel(x);
+    const key=normalizeText(type);
+    scheduledByType[key]=(scheduledByType[key]||0)+credit;
+    if(!datesByType[key])datesByType[key]=[];
+    datesByType[key].push(x);
+  });
+
+  const requirements=(plan.requirements||[]).filter(r=>Number(r.amount)>0);
+  const rows=requirements.map(r=>{
+    const key=normalizeText(r.type);
+    const planned=Number(r.amount)||0;
+    const scheduled=scheduledByType[key]||0;
+    return {
+      type:r.type,
+      planned,
+      scheduled,
+      left:Math.max(0,planned-scheduled),
+      over:Math.max(0,scheduled-planned),
+      items:datesByType[key]||[]
+    };
+  });
+
+  Object.entries(scheduledByType).forEach(([key,scheduled])=>{
+    if(rows.some(r=>normalizeText(r.type)===key))return;
+    const sample=items.find(x=>normalizeText(lessonTypeLabel(x))===key);
+    rows.push({
+      type:sample?lessonTypeLabel(sample):key,
+      planned:0,
+      scheduled,
+      left:0,
+      over:scheduled,
+      items:datesByType[key]||[],
+      unplanned:true
+    });
+  });
+
+  const plannedTotal=Number(plan.total)||requirements.reduce((s,r)=>s+Number(r.amount||0),0);
+  const scheduledTotal=items.length*credit;
+  const missing=rows.reduce((s,r)=>s+r.left,0);
+  const over=rows.reduce((s,r)=>s+r.over,0);
+
+  let status='missing';
+  if(over>0)status='over';
+  else if(missing===0 && scheduledTotal===plannedTotal)status='complete';
+
+  return {plan,items,rows,plannedTotal,scheduledTotal,missing,over,status};
+}
+
+function planStatusLabel(stats){
+  if(stats.status==='complete')return 'УСЕ ВИСТАВЛЕНО';
+  if(stats.status==='over')return 'Є ПЕРЕВИЩЕННЯ';
+  return 'ЩЕ НЕ ВСЕ ВИСТАВЛЕНО';
+}
+
+function matchingPlanForClass(x){
+  if(!x)return null;
+  if(x.disciplinePlanId){
+    const direct=(state.disciplinePlans||[]).find(p=>p.id===x.disciplinePlanId);
+    if(direct)return direct;
+  }
+  if(!x.date)return null;
+
+  return (state.disciplinePlans||[]).find(p=>{
+    const s=planSemesterRange(p);
+    return x.date>=s.start && x.date<=s.end &&
+      normalizeText(x.subject)===normalizeText(p.subject) &&
+      normalizeText(x.group)===normalizeText(p.group);
+  })||null;
+}
+
+function classDisciplinePlanSelect(x={}){
+  const plans=(state.disciplinePlans||[]).map(p=>({p,stats:planStats(p)}));
+  if(!plans.length)return '';
+
+  const matched=matchingPlanForClass(x);
+  const currentId=x.disciplinePlanId||matched?.id||'';
+
+  return `<div class="field full discipline-link-field">
+    <label>План дисципліни</label>
+    <select name="disciplinePlanId" onchange="applyDisciplinePlanToClass(this.value)">
+      <option value="">Без прив’язки до плану</option>
+      ${plans.map(({p,stats})=>`
+        <option value="${esc(p.id)}" ${p.id===currentId?'selected':''}>
+          ${esc(p.group)} · ${esc(p.subject)} · ${stats.scheduledTotal}/${stats.plannedTotal} ${planUnitLabel(p)}
+        </option>`).join('')}
+    </select>
+    <small>При виборі плану група й дисципліна підставляються автоматично.</small>
+  </div>`;
+}
+
+function applyDisciplinePlanToClass(id){
+  if(!id)return;
+  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(!plan)return;
+  const group=document.querySelector('[name="group"]');
+  const subject=document.querySelector('[name="subject"]');
+  if(group)group.value=plan.group||'';
+  if(subject)subject.value=plan.subject||'';
+}
+
+function resolveDisciplinePlanForData(data){
+  if(data.disciplinePlanId){
+    return (state.disciplinePlans||[]).find(p=>p.id===data.disciplinePlanId)||null;
+  }
+  if(!data.date)return null;
+  return (state.disciplinePlans||[]).find(p=>{
+    const s=planSemesterRange(p);
+    return data.date>=s.start && data.date<=s.end &&
+      normalizeText(data.subject)===normalizeText(p.subject) &&
+      normalizeText(data.group)===normalizeText(p.group);
+  })||null;
+}
+
+function attachMatchingClassesToPlan(plan){
+  const s=planSemesterRange(plan);
+  state.classes.forEach(x=>{
+    if(x.disciplinePlanId)return;
+    if(x.date>=s.start && x.date<=s.end &&
+      normalizeText(x.subject)===normalizeText(plan.subject) &&
+      normalizeText(x.group)===normalizeText(plan.group)){
+      x.disciplinePlanId=plan.id;
+    }
+  });
+}
+
+function planSemesterSelect(x={}){
+  const value=x.semesterKey||selectedSemester||semesterKeyForDate(isoToday());
+  return `<div class="field">
+    <label>Семестр</label>
+    <select name="semesterKey">
+      ${semesterOptions().map(s=>`<option value="${s.key}" ${s.key===value?'selected':''}>${esc(s.label)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
+function planRequirementsMarkup(x={}){
+  const existing={};
+  (x.requirements||[]).forEach(r=>existing[normalizeText(r.type)]=Number(r.amount)||0);
+  const custom=(x.requirements||[]).find(r=>!planLessonTypes.some(t=>normalizeText(t)===normalizeText(r.type)));
+
+  return `<div class="field full plan-requirements-field">
+    <label>Види занять за навчальним планом</label>
+    <div class="plan-requirements-head">
+      <span>Вид заняття</span><span>Кількість</span>
+    </div>
+    <div class="plan-requirements-list">
+      ${planLessonTypes.map((t,i)=>`
+        <div class="plan-requirement-row">
+          <span>${esc(t)}</span>
+          <input type="number" min="0" step="1" name="planReq_${i}" value="${existing[normalizeText(t)]||''}" placeholder="0" oninput="updatePlanDistribution()">
+        </div>`).join('')}
+      <div class="plan-requirement-row custom">
+        <input type="text" name="customPlanType" value="${esc(custom?.type||'')}" placeholder="Свій вид заняття">
+        <input type="number" min="0" step="1" name="customPlanAmount" value="${custom?.amount||''}" placeholder="0" oninput="updatePlanDistribution()">
+      </div>
+    </div>
+    <div class="plan-distribution" id="planDistribution"></div>
+  </div>`;
+}
+
+function updatePlanDistribution(){
+  const form=document.getElementById('entryForm');
+  if(!form)return;
+  const total=Number(form.querySelector('[name="planTotal"]')?.value)||0;
+  let distributed=0;
+  planLessonTypes.forEach((t,i)=>{
+    distributed+=Number(form.querySelector(`[name="planReq_${i}"]`)?.value)||0;
+  });
+  distributed+=Number(form.querySelector('[name="customPlanAmount"]')?.value)||0;
+
+  const el=document.getElementById('planDistribution');
+  if(!el)return;
+  const diff=total-distributed;
+  el.className=`plan-distribution ${diff===0&&total>0?'ok':diff<0?'over':'missing'}`;
+  el.innerHTML=total
+    ?`Розподілено <b>${distributed}</b> із <b>${total}</b>. ${diff===0?'Все збігається ✓':diff>0?`Ще розподілити: ${diff}`:`Перевищено на: ${Math.abs(diff)}`}`
+    :'Вкажіть загальний обсяг дисципліни.';
+}
+
+function disciplinePlanForm(x={}){
+  return `<div class="form-grid">
+    ${inputField('subject','Назва дисципліни','text',x.subject,'Режисура естради і шоу',true,true)}
+    ${inputField('group','Група','text',x.group,'РЕМС-44',false,true)}
+    ${planSemesterSelect(x)}
+    ${selectField('planUnit','Рахувати у',['Заняття (пари)','Академічні години'],x.unit==='hours'?'Академічні години':'Заняття (пари)')}
+    ${inputField('planTotal','Загальний обсяг','number',x.total||'','Наприклад, 18',false,true)}
+    <div class="field plan-unit-help">
+      <label>Як рахується</label>
+      <div>Якщо вибрано академічні години, одна стандартна пара = <b>2 академічні години</b>.</div>
+    </div>
+    ${planRequirementsMarkup(x)}
+    ${textareaField('planNotes','Нотатка до дисципліни',x.notes||'')}
+  </div>`;
+}
+
+function openDisciplinePlanForm(plan={}){
+  openModal();
+  showForm('disciplinePlan',plan);
+}
+
+function editDisciplinePlan(id){
+  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(plan)openDisciplinePlanForm(plan);
+}
+
+function deleteDisciplinePlan(id){
+  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(!plan)return;
+  if(!confirm(`Видалити план дисципліни «${plan.subject} · ${plan.group}»? Самі заняття залишаться.`))return;
+  state.disciplinePlans=state.disciplinePlans.filter(p=>p.id!==id);
+  state.classes.forEach(x=>{if(x.disciplinePlanId===id)delete x.disciplinePlanId});
+  if(selectedDisciplineKey===id)selectedDisciplineKey=null;
+  save();
+  toast('План дисципліни видалено');
+}
+
+function addClassFromPlan(id,date=''){
+  const plan=(state.disciplinePlans||[]).find(p=>p.id===id);
+  if(!plan)return;
+  openModal();
+  showForm('class',{
+    disciplinePlanId:plan.id,
+    group:plan.group,
+    subject:plan.subject,
+    date:date||activeQuickDate()
+  });
+}
 function lessonSlotSelect(x){
   const current=slotValue(x.time,x.end);
   const exact=lessonSlots.some(([s,e])=>slotValue(s,e)===current);
@@ -1414,45 +1698,99 @@ function renderDisciplines(){
   if(!host)return;
 
   const semesters=semesterOptions();
-  if(!semesters.some(x=>x.key===selectedSemester)){
+  if(!semesters.some(s=>s.key===selectedSemester)){
     selectedSemester=semesterKeyForDate(isoToday());
   }
 
-  const semester=semesterInfo(selectedSemester);
-  const groups=disciplineGroups(selectedSemester);
+  const plans=disciplinePlansForSemester(selectedSemester);
+  const stats=plans.map(planStats);
 
   if(selectedDisciplineKey){
-    const group=groups.find(g=>g.key===selectedDisciplineKey);
-    if(group){
-      const progress=disciplineProgress(group.completed,group.total);
+    const plan=(state.disciplinePlans||[]).find(p=>p.id===selectedDisciplineKey);
+    if(plan){
+      const s=planStats(plan);
+      const percent=s.plannedTotal?Math.min(100,Math.round(s.scheduledTotal/s.plannedTotal*100)):0;
+      const unit=planUnitLabel(plan);
+
       host.innerHTML=`
         <div class="discipline-detail-head">
           <button class="back-btn" onclick="closeDiscipline()">← До дисциплін</button>
           <div class="discipline-detail-title">
-            <span>${esc(semester.label)}</span>
-            <h2>${esc(group.subject)}</h2>
-            <p>${esc(group.group)}</p>
+            <span>${esc(semesterInfo(plan.semesterKey).label)}</span>
+            <h2>${esc(plan.subject)}</h2>
+            <p>${esc(plan.group)} · план: ${plan.total} ${unit}</p>
           </div>
-          <div class="discipline-detail-stats">
-            <div><small>УСЬОГО</small><b>${group.total}</b></div>
-            <div><small>МИНУЛО</small><b>${group.completed}</b></div>
-            <div><small>ЗАЛИШИЛОСЯ</small><b>${group.remaining+group.today}</b></div>
+          <div class="discipline-detail-actions-top">
+            <button onclick="editDisciplinePlan('${plan.id}')">Редагувати план</button>
+            <button class="gold-btn" onclick="addClassFromPlan('${plan.id}')">＋ Поставити заняття</button>
+          </div>
+        </div>
+
+        <div class="plan-health ${s.status}">
+          <div>
+            <small>СТАН РОЗКЛАДУ</small>
+            <b>${planStatusLabel(s)}</b>
+            <span>${s.scheduledTotal} із ${s.plannedTotal} ${unit} уже виставлено</span>
+          </div>
+          <div class="plan-health-number">
+            <strong>${s.status==='complete'?'✓':s.status==='over'?`+${s.over}`:s.missing}</strong>
+            <small>${s.status==='complete'?'готово':s.status==='over'?'перевищення':'ще потрібно'}</small>
           </div>
         </div>
 
         <div class="discipline-progress-card">
           <div>
-            <b>Прогрес семестру</b>
-            <small>${group.completed} із ${group.total} занять уже минули</small>
+            <b>Заповнення розкладу</b>
+            <small>${s.scheduledTotal} із ${s.plannedTotal} ${unit}</small>
           </div>
-          <div class="discipline-progress-track"><span style="width:${progress}%"></span></div>
-          <strong>${progress}%</strong>
+          <div class="discipline-progress-track"><span style="width:${percent}%"></span></div>
+          <strong>${percent}%</strong>
+        </div>
+
+        <div class="requirements-card">
+          <div class="requirements-head">
+            <div>
+              <div class="small-label">НАВЧАЛЬНИЙ ПЛАН</div>
+              <h3>Види занять</h3>
+            </div>
+            <span>Кожен вид контролюється окремо</span>
+          </div>
+          <div class="requirements-table">
+            ${s.rows.map(r=>{
+              const cls=r.over>0?'over':r.left>0?'missing':'done';
+              return `<div class="requirement-row ${cls}">
+                <div class="requirement-type">
+                  <b>${esc(r.type)}</b>
+                  ${r.unplanned?'<small>Цього виду немає в плані</small>':''}
+                </div>
+                <div class="requirement-number"><small>ПЛАН</small><b>${r.planned}</b></div>
+                <div class="requirement-number"><small>В РОЗКЛАДІ</small><b>${r.scheduled}</b></div>
+                <div class="requirement-number result">
+                  <small>${r.over?'ПЕРЕВИЩЕНО':'ЗАЛИШИЛОСЯ'}</small>
+                  <b>${r.over?`+${r.over}`:r.left}</b>
+                </div>
+                <div class="requirement-dates">
+                  ${r.items.length
+                    ?r.items.map(x=>`<button onclick="openDay('${x.date}')">${fmtShort(x.date)} · ${pairNumber(x.time,x.end)}</button>`).join('')
+                    :'<span>Ще не виставлено</span>'}
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="discipline-schedule-head">
+          <div>
+            <div class="small-label">РОЗКЛАД</div>
+            <h3>Де вже стоять заняття</h3>
+          </div>
+          <span>${s.items.length} у календарі</span>
         </div>
 
         <div class="discipline-plan">
-          ${group.items.map((x,i)=>{
-            const [status,statusClass]=lessonTemporalLabel(x);
-            return `<div class="discipline-lesson ${statusClass}">
+          ${s.items.length?s.items.map((x,i)=>{
+            const [label,cls]=lessonTemporalLabel(x);
+            return `<div class="discipline-lesson ${cls}" style="${groupStyle(x.group)}">
               <div class="discipline-lesson-num">${i+1}</div>
               <div class="discipline-lesson-date">
                 <b>${fmtDate(x.date)}</b>
@@ -1462,78 +1800,112 @@ function renderDisciplines(){
                 <div class="discipline-lesson-meta">
                   <span>${esc(lessonTypeLabel(x))}</span>
                   <span>${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</span>
-                  <span class="lesson-state ${statusClass}">${status}</span>
+                  <span class="lesson-state ${cls}">${label}</span>
                 </div>
                 <h4>${x.topic?esc(x.topic):'<span class="missing-value">Тема ще не внесена</span>'}</h4>
-                ${x.prep
-                  ?`<div class="discipline-prep"><b>Підготувати:</b> ${esc(x.prep)}</div>`
-                  :`<div class="discipline-prep empty">Що підготувати — не вказано</div>`}
+                ${x.prep?`<div class="discipline-prep"><b>Підготувати:</b> ${esc(x.prep)}</div>`:''}
               </div>
               <div class="discipline-lesson-actions">
                 <button onclick="editEntry('class','${x.id}')">Редагувати</button>
               </div>
             </div>`;
-          }).join('')}
-        </div>`;
+          }).join(''):`<div class="discipline-empty small">
+            <b>У розкладі ще немає занять.</b>
+            <span>План уже внесений. Тепер розставляй заняття — CONTROL буде автоматично віднімати їх від плану.</span>
+            <button class="gold-btn" onclick="addClassFromPlan('${plan.id}')">＋ Поставити перше заняття</button>
+          </div>`}
+        </div>
+
+        ${plan.notes?`<div class="plan-notes"><b>Нотатка до дисципліни</b><p>${esc(plan.notes)}</p></div>`:''}
+        <div class="discipline-danger"><button onclick="deleteDisciplinePlan('${plan.id}')">Видалити план дисципліни</button></div>`;
       return;
     }
     selectedDisciplineKey=null;
   }
 
-  const totalLessons=groups.reduce((s,g)=>s+g.total,0);
-  const totalCompleted=groups.reduce((s,g)=>s+g.completed,0);
-  const totalRemaining=groups.reduce((s,g)=>s+g.remaining+g.today,0);
+  const complete=stats.filter(s=>s.status==='complete').length;
+  const missing=stats.filter(s=>s.status==='missing').length;
+  const over=stats.filter(s=>s.status==='over').length;
+
+  const unplannedGroups=disciplineGroups(selectedSemester).filter(g=>
+    !plans.some(p=>
+      normalizeText(p.subject)===normalizeText(g.subject) &&
+      normalizeText(p.group)===normalizeText(g.group)
+    )
+  );
 
   host.innerHTML=`
     <div class="disciplines-toolbar">
       <div>
-        <div class="small-label">ПЛАН ВИКЛАДАННЯ</div>
+        <div class="small-label">НАВЧАЛЬНЕ НАВАНТАЖЕННЯ</div>
         <h2>Дисципліни</h2>
-        <p>Формуються автоматично з уже внесених занять — нічого дублювати не потрібно.</p>
+        <p>Спочатку вносимо план дисципліни, а потім CONTROL перевіряє, чи все виставлено в розклад.</p>
       </div>
-      <select onchange="setSemester(this.value)">
-        ${semesters.map(s=>`<option value="${s.key}" ${s.key===selectedSemester?'selected':''}>${esc(s.label)}</option>`).join('')}
-      </select>
+      <div class="disciplines-toolbar-actions">
+        <select onchange="setSemester(this.value)">
+          ${semesters.map(s=>`<option value="${s.key}" ${s.key===selectedSemester?'selected':''}>${esc(s.label)}</option>`).join('')}
+        </select>
+        <button class="gold-btn" onclick="openDisciplinePlanForm({semesterKey:'${selectedSemester}'})">＋ Додати дисципліну</button>
+      </div>
     </div>
 
-    <div class="semester-summary">
-      <div><small>ДИСЦИПЛІН</small><b>${groups.length}</b></div>
-      <div><small>ЗАНЯТЬ</small><b>${totalLessons}</b></div>
-      <div><small>МИНУЛО</small><b>${totalCompleted}</b></div>
-      <div><small>ЗАЛИШИЛОСЯ</small><b>${totalRemaining}</b></div>
+    <div class="semester-summary plan-summary">
+      <div><small>ДИСЦИПЛІН</small><b>${plans.length}</b></div>
+      <div class="summary-good"><small>УСЕ ВИСТАВЛЕНО</small><b>${complete}</b></div>
+      <div class="summary-warn"><small>ЩЕ НЕ ВСЕ</small><b>${missing}</b></div>
+      <div class="summary-over"><small>ПЕРЕВИЩЕННЯ</small><b>${over}</b></div>
     </div>
 
-    ${groups.length?`
+    ${plans.length?`
       <div class="discipline-grid">
-        ${groups.map(g=>{
-          const progress=disciplineProgress(g.completed,g.total);
-          return `<button class="discipline-card" onclick="openDiscipline('${encodeURIComponent(g.key)}')">
+        ${stats.map(s=>{
+          const p=s.plan;
+          const percent=s.plannedTotal?Math.min(100,Math.round(s.scheduledTotal/s.plannedTotal*100)):0;
+          const unit=planUnitLabel(p);
+          return `<button class="discipline-card plan-card ${s.status}" onclick="openDiscipline('${encodeURIComponent(p.id)}')">
             <div class="discipline-card-top">
-              <span>${esc(g.group)}</span>
-              <b>${g.total} ${g.total===1?'заняття':'занять'}</b>
+              <span>${esc(p.group)}</span>
+              <b class="plan-status-pill ${s.status}">${planStatusLabel(s)}</b>
             </div>
-            <h3>${esc(g.subject)}</h3>
-            <div class="discipline-card-progress">
-              <span style="width:${progress}%"></span>
+            <h3>${esc(p.subject)}</h3>
+            <div class="plan-card-total"><strong>${s.scheduledTotal}</strong><span>/ ${s.plannedTotal} ${unit}</span></div>
+            <div class="discipline-card-progress"><span style="width:${percent}%"></span></div>
+            <div class="plan-card-types">
+              ${s.rows.filter(r=>r.planned>0).map(r=>`
+                <span class="${r.over?'over':r.left?'missing':'done'}">${esc(r.type)} <b>${r.scheduled}/${r.planned}</b></span>
+              `).join('')}
             </div>
-            <div class="discipline-card-numbers">
-              <span><b>${g.completed}</b><small>минуло</small></span>
-              <span><b>${g.remaining+g.today}</b><small>залишилось</small></span>
-              <span><b>${g.withTopics}/${g.total}</b><small>тем внесено</small></span>
+            <div class="plan-card-message ${s.status==='complete'?'good':s.status}">
+              ${s.status==='complete'
+                ?'✓ Усе навантаження вже є в розкладі'
+                :s.status==='over'
+                  ?`Перевищення: ${s.rows.filter(r=>r.over).map(r=>`${esc(r.type)} +${r.over}`).join(' · ')}`
+                  :`Залишилось: ${s.rows.filter(r=>r.left).map(r=>`${esc(r.type)} ${r.left}`).join(' · ')}`}
             </div>
-            ${g.next?`<div class="discipline-next">
-              <small>НАСТУПНЕ</small>
-              <b>${fmtDate(g.next.date)} · ${pairNumber(g.next.time,g.next.end)}</b>
-              <span>${g.next.topic?esc(g.next.topic):'Тема ще не внесена'}</span>
-            </div>`:`<div class="discipline-next done"><b>Семестр за цією дисципліною завершено</b></div>`}
           </button>`;
         }).join('')}
       </div>`
       :`<div class="discipline-empty">
-        <b>У цьому семестрі ще немає занять.</b>
-        <span>Щойно ти додаси заняття з групою та назвою дисципліни, CONTROL автоматично створить тут дисципліну.</span>
-        <button class="gold-btn" onclick="openAdd('class')">＋ Додати перше заняття</button>
-      </div>`}`;
+        <b>Навчальний план цього семестру ще не внесено.</b>
+        <span>Створи дисципліну, вкажи загальний обсяг і розподіл за видами занять.</span>
+        <button class="gold-btn" onclick="openDisciplinePlanForm({semesterKey:'${selectedSemester}'})">＋ Додати першу дисципліну</button>
+      </div>`}
+
+    ${unplannedGroups.length?`
+      <div class="unplanned-section">
+        <div class="unplanned-head">
+          <div>
+            <div class="small-label">ПОТРЕБУЄ УВАГИ</div>
+            <h3>Заняття без навчального плану</h3>
+          </div>
+          <span>${unplannedGroups.length}</span>
+        </div>
+        ${unplannedGroups.map(g=>`
+          <div class="unplanned-row">
+            <div><b>${esc(g.subject)}</b><small>${esc(g.group)} · ${g.total} занять уже в календарі</small></div>
+            <button onclick="openDisciplinePlanForm({subject:'${esc(g.subject)}',group:'${esc(g.group)}',semesterKey:'${selectedSemester}'})">Створити план</button>
+          </div>`).join('')}
+      </div>`:''}`;
 }
 
 function renderTasks(){
@@ -1667,9 +2039,11 @@ function showForm(type,item={}){
     resetRecurrenceDraft(item.date||isoToday());
   }
 
-  const name={class:'Заняття',task:'Справа',project:'Проєкт',note:'Нотатка'}[type];
+  const name={class:'Заняття',disciplinePlan:'Дисципліна',task:'Справа',project:'Проєкт',note:'Нотатка'}[type];
   document.getElementById('modalTitle').textContent=(item.id?'Редагувати · ':'Додати · ')+name;
   document.getElementById('formFields').innerHTML=formMarkup(type,item);
+
+  if(type==='disciplinePlan')setTimeout(updatePlanDistribution,0);
 
   if(type==='class' && !item.id){
     const form=document.getElementById('entryForm');
@@ -1695,6 +2069,7 @@ function textareaField(name,label,value=''){return `<div class="field full"><lab
 function selectField(name,label,opts,value=''){return `<div class="field"><label>${label}</label><select name="${name}">${opts.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`}
 function formMarkup(type,x){
   if(type==='class')return `<div class="form-grid">
+    ${classDisciplinePlanSelect(x)}
     ${classTemplateSelect(x)}
     ${inputField('group','Група','text',x.group,'РЕМС-44',false,true)}
     ${inputField('subject','Дисципліна','text',x.subject,'Режисура естради і шоу',false,true)}
@@ -1711,6 +2086,7 @@ function formMarkup(type,x){
     ${textareaField('prep','Що підготувати',x.prep)}
     ${saveTemplateControls()}
   </div>`;
+  if(type==='disciplinePlan')return disciplinePlanForm(x);
   if(type==='task')return `<div class="form-grid">
     ${inputField('title','Що треба зробити?','text',x.title,'',true,true)}
     ${selectField('category','Категорія',['Викладання','Студенти','Кафедра','Проєкти','Наука','Особисте'],x.category||'Викладання')}
@@ -1776,6 +2152,78 @@ function submitEntry(e){
   const id=document.getElementById('entryId').value;
   const data=Object.fromEntries(new FormData(e.target).entries());
 
+  if(type==='disciplinePlan'){
+    const requirements=[];
+    planLessonTypes.forEach((t,i)=>{
+      const amount=Number(data[`planReq_${i}`])||0;
+      if(amount>0)requirements.push({type:t,amount});
+      delete data[`planReq_${i}`];
+    });
+
+    const customAmount=Number(data.customPlanAmount)||0;
+    const customType=(data.customPlanType||'').trim();
+    if(customAmount>0 && customType)requirements.push({type:customType,amount});
+
+    const total=Number(data.planTotal)||0;
+    const sum=requirements.reduce((s,r)=>s+r.amount,0);
+
+    if(total<=0){
+      alert('Вкажіть загальний обсяг дисципліни.');
+      return;
+    }
+    if(sum!==total){
+      alert(`Сума видів занять має дорівнювати загальному обсягу. Зараз ${sum} із ${total}.`);
+      return;
+    }
+
+    const planData={
+      subject:(data.subject||'').trim(),
+      group:(data.group||'').trim(),
+      semesterKey:data.semesterKey,
+      unit:data.planUnit==='Академічні години'?'hours':'lessons',
+      total,
+      requirements,
+      notes:data.planNotes||''
+    };
+
+    if(id){
+      const i=state.disciplinePlans.findIndex(p=>p.id===id);
+      if(i<0)return;
+      state.disciplinePlans[i]={...state.disciplinePlans[i],...planData,id};
+
+      state.classes.forEach(x=>{
+        if(x.disciplinePlanId===id){
+          x.subject=planData.subject;
+          x.group=planData.group;
+        }
+      });
+
+      attachMatchingClassesToPlan(state.disciplinePlans[i]);
+      selectedSemester=planData.semesterKey;
+      selectedDisciplineKey=id;
+      closeModal();save();toast('План дисципліни оновлено');
+      return;
+    }
+
+    const duplicate=state.disciplinePlans.find(p=>
+      p.semesterKey===planData.semesterKey &&
+      normalizeText(p.subject)===normalizeText(planData.subject) &&
+      normalizeText(p.group)===normalizeText(planData.group)
+    );
+    if(duplicate){
+      alert('Для цієї дисципліни, групи й семестру план уже існує.');
+      return;
+    }
+
+    const plan={...planData,id:uid('discipline')};
+    state.disciplinePlans.push(plan);
+    attachMatchingClassesToPlan(plan);
+    selectedSemester=plan.semesterKey;
+    selectedDisciplineKey=plan.id;
+    closeModal();save();toast('План дисципліни створено');
+    return;
+  }
+
   const saveAsTemplate=data.saveTemplate==='on';
   const templateName=data.templateName||'';
   const seriesScope=data.seriesScope||'this';
@@ -1792,6 +2240,15 @@ function submitEntry(e){
   delete data.repeatUntil;
 
   if(type==='class'){
+    const linkedPlan=resolveDisciplinePlanForData(data);
+    if(linkedPlan){
+      data.disciplinePlanId=linkedPlan.id;
+      data.subject=linkedPlan.subject;
+      data.group=linkedPlan.group;
+    }else{
+      delete data.disciplinePlanId;
+    }
+
     if(data.lessonType!=='Інше')data.lessonTypeCustom='';
     data.room=data.roomChoice==='Інше'?(data.roomCustom||''):data.roomChoice;
     delete data.roomChoice;

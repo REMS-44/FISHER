@@ -1,5 +1,5 @@
-const CACHE='fisher-control-v20';
-const FILES=['./','./index.html','./styles.css?v=20','./script.js?v=20','./manifest.json'];
+const CACHE='fisher-control-v21';
+const FILES=['./','./index.html','./styles.css?v=21','./script.js?v=21','./manifest.json'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();
@@ -7,8 +7,7 @@ self.addEventListener('install',event=>{
 });
 self.addEventListener('activate',event=>{
   event.waitUntil(
-    caches.keys()
-      .then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+    caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
       .then(()=>self.clients.claim())
   );
 });
