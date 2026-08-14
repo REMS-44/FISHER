@@ -7,6 +7,11 @@ let currentYear=(new Date()).getFullYear();
 let selectedMonthOffset=0;
 let selectedDate=isoToday();
 
+let recurrenceDraftDates=new Set();
+let recurrenceExcludedDates=new Set();
+let recurrenceOverrides={};
+let recurrencePickerMonth=new Date();
+
 function load(){try{return {...seed,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){return structuredClone(seed)}}
 function save(){
   localStorage.setItem(KEY,JSON.stringify(state));
@@ -178,6 +183,7 @@ function applyClassTemplate(id){
       toggleCustomRoom('');
     }
   }
+  refreshRecurrenceUI();
 }
 
 function storeClassTemplate(data,name){
@@ -217,24 +223,298 @@ function classTemplatesBar(){
   </div>`;
 }
 
-function recurrenceFields(x={}){
-  if(x.id)return '';
-  const defaultUntil='';
-  return `<div class="field">
-    <label>Повторення</label>
-    <select name="repeatMode" onchange="toggleRepeatUntil(this.value)">
-      <option value="none">Не повторювати</option>
-      <option value="weekly">Щотижня</option>
+function seriesScopeFields(x={}){
+  if(!x.id || !x.seriesId)return '';
+  return `<div class="field full series-scope-box">
+    <label>Редагування серії</label>
+    <select name="seriesScope">
+      <option value="this">Тільки це заняття</option>
+      <option value="future">Це заняття і всі наступні</option>
+      <option value="all">Усю серію</option>
     </select>
-  </div>
-  <div class="field hidden" id="repeatUntilField">
-    <label>Повторювати до</label>
-    <input name="repeatUntil" type="date" value="${defaultUntil}">
+    <small>Дата змінюється лише для поточного заняття. Для «наступних» і «всієї серії» оновлюються параметри заняття: час, аудиторія, вид, тема, підготовка тощо.</small>
   </div>`;
 }
-function toggleRepeatUntil(value){
-  const el=document.getElementById('repeatUntilField');
-  if(el)el.classList.toggle('hidden',value!=='weekly');
+
+function recurrenceFields(x={}){
+  if(x.id)return seriesScopeFields(x);
+
+  return `<div class="field">
+    <label>Повторення</label>
+    <select name="repeatMode" onchange="toggleRecurrenceMode(this.value)">
+      <option value="none">Один раз</option>
+      <option value="weekly">Щотижня</option>
+      <option value="biweekly">Раз на два тижні</option>
+      <option value="selected">Обрати конкретні дати</option>
+    </select>
+  </div>
+
+  <div class="field hidden" id="repeatUntilField">
+    <label>Повторювати до</label>
+    <input name="repeatUntil" type="date" onchange="refreshRecurrenceUI()">
+  </div>
+
+  <div class="field full hidden" id="manualDatesField">
+    <label>Обрати дати</label>
+    <div class="manual-date-picker" id="manualDatePicker"></div>
+  </div>
+
+  <div class="field full hidden" id="occurrencePreviewField">
+    <label>Дати серії та винятки</label>
+    <div class="occurrence-help">Тут можна для окремої дати змінити пару, вид заняття або аудиторію. Галочка ліворуч — включити / пропустити цю дату.</div>
+    <div class="occurrence-preview" id="occurrencePreview"></div>
+  </div>`;
+}
+
+function resetRecurrenceDraft(baseDate){
+  recurrenceDraftDates=new Set();
+  recurrenceExcludedDates=new Set();
+  recurrenceOverrides={};
+  const d=dateObj(baseDate||isoToday())||new Date();
+  recurrencePickerMonth=new Date(d.getFullYear(),d.getMonth(),1);
+}
+
+function toggleRecurrenceMode(value){
+  const until=document.getElementById('repeatUntilField');
+  const manual=document.getElementById('manualDatesField');
+  const preview=document.getElementById('occurrencePreviewField');
+
+  if(until)until.classList.toggle('hidden',!['weekly','biweekly'].includes(value));
+  if(manual)manual.classList.toggle('hidden',value!=='selected');
+  if(preview)preview.classList.toggle('hidden',value==='none');
+
+  if(value==='selected' && recurrenceDraftDates.size===0){
+    const base=document.querySelector('[name="date"]')?.value;
+    if(base)recurrenceDraftDates.add(base);
+  }
+  refreshRecurrenceUI();
+}
+
+function getBaseClassDraft(){
+  const value=name=>document.querySelector(`[name="${name}"]`)?.value||'';
+  const lessonType=value('lessonType')||'Лекція';
+  let room=value('roomChoice');
+  if(room==='Інше')room=value('roomCustom');
+
+  return {
+    date:value('date'),
+    time:value('time'),
+    end:value('end'),
+    lessonType,
+    lessonTypeCustom:lessonType==='Інше'?value('lessonTypeCustom'):'',
+    room
+  };
+}
+
+function generatedRecurrenceDates(mode){
+  const base=getBaseClassDraft().date;
+  if(!base)return [];
+
+  if(mode==='selected'){
+    return [...recurrenceDraftDates].sort();
+  }
+
+  if(!['weekly','biweekly'].includes(mode))return [base];
+
+  const until=document.querySelector('[name="repeatUntil"]')?.value;
+  if(!until)return [];
+
+  const startD=dateObj(base),untilD=dateObj(until);
+  if(!startD||!untilD||untilD<startD)return [];
+
+  const step=mode==='biweekly'?14:7;
+  const out=[];
+  const d=new Date(startD);
+  let guard=0;
+  while(d<=untilD && guard<80){
+    out.push(isoLocal(d));
+    d.setDate(d.getDate()+step);
+    guard++;
+  }
+  return out;
+}
+
+function renderManualDatePicker(){
+  const host=document.getElementById('manualDatePicker');
+  if(!host)return;
+
+  const y=recurrencePickerMonth.getFullYear();
+  const m=recurrencePickerMonth.getMonth();
+  const first=new Date(y,m,1);
+  const start=new Date(first);
+  start.setDate(first.getDate()-((first.getDay()+6)%7));
+
+  let cells='';
+  for(let i=0;i<42;i++){
+    const d=new Date(start);d.setDate(start.getDate()+i);
+    const iso=isoLocal(d);
+    const inMonth=d.getMonth()===m;
+    const selected=recurrenceDraftDates.has(iso);
+    cells+=`<button type="button" class="manual-date ${inMonth?'':'outside'} ${selected?'selected':''}" onclick="toggleManualDate('${iso}')">${d.getDate()}</button>`;
+  }
+
+  host.innerHTML=`
+    <div class="manual-picker-head">
+      <button type="button" onclick="stepManualPicker(-1)">←</button>
+      <b>${monthsNom[m]} ${y}</b>
+      <button type="button" onclick="stepManualPicker(1)">→</button>
+    </div>
+    <div class="manual-weekdays">${weekShort.map(x=>`<span>${x}</span>`).join('')}</div>
+    <div class="manual-days">${cells}</div>
+    <div class="manual-selected-count">Обрано дат: <b>${recurrenceDraftDates.size}</b></div>`;
+}
+
+function stepManualPicker(delta){
+  recurrencePickerMonth=new Date(
+    recurrencePickerMonth.getFullYear(),
+    recurrencePickerMonth.getMonth()+Number(delta),
+    1
+  );
+  renderManualDatePicker();
+}
+
+function toggleManualDate(iso){
+  if(recurrenceDraftDates.has(iso)){
+    recurrenceDraftDates.delete(iso);
+    recurrenceExcludedDates.delete(iso);
+    delete recurrenceOverrides[iso];
+  }else{
+    recurrenceDraftDates.add(iso);
+  }
+  renderManualDatePicker();
+  renderOccurrencePreview();
+}
+
+function occurrenceOverride(date){
+  if(!recurrenceOverrides[date])recurrenceOverrides[date]={};
+  return recurrenceOverrides[date];
+}
+
+function setOccurrenceIncluded(date,checked){
+  if(checked)recurrenceExcludedDates.delete(date);
+  else recurrenceExcludedDates.add(date);
+}
+
+function setOccurrenceOverride(date,key,value){
+  const o=occurrenceOverride(date);
+  o[key]=value;
+  if(key==='roomChoice'){
+    const custom=document.getElementById(`occ-room-custom-${date}`);
+    if(custom)custom.classList.toggle('hidden',value!=='Інше');
+  }
+  if(key==='lessonType'){
+    const custom=document.getElementById(`occ-type-custom-${date}`);
+    if(custom)custom.classList.toggle('hidden',value!=='Інше');
+  }
+}
+
+function slotOptionsForOccurrence(selected){
+  return `
+    <option value="">Як у базовому занятті</option>
+    ${lessonSlots.map(([s,e],i)=>`<option value="${s}|${e}" ${selected===`${s}|${e}`?'selected':''}>${i+1} пара · ${s}–${e}</option>`).join('')}
+  `;
+}
+
+function renderOccurrencePreview(){
+  const host=document.getElementById('occurrencePreview');
+  if(!host)return;
+
+  const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
+  const dates=generatedRecurrenceDates(mode);
+
+  if(!dates.length){
+    host.innerHTML=`<div class="occurrence-empty">${mode==='selected'?'Оберіть хоча б одну дату.':'Вкажіть дату завершення серії.'}</div>`;
+    return;
+  }
+
+  host.innerHTML=dates.map(date=>{
+    const d=dateObj(date);
+    const o=occurrenceOverrides[date]||{};
+    const roomKnown=roomOptions.includes(o.roomChoice||'');
+    const roomChoice=o.roomChoice||'';
+    const lessonType=o.lessonType||'';
+    const included=!recurrenceExcludedDates.has(date);
+
+    return `<div class="occurrence-row ${included?'':'excluded'}">
+      <label class="occ-include">
+        <input type="checkbox" ${included?'checked':''} onchange="setOccurrenceIncluded('${date}',this.checked); this.closest('.occurrence-row').classList.toggle('excluded',!this.checked)">
+      </label>
+
+      <div class="occ-date">
+        <b>${fmtDate(date)}</b>
+        <small>${weekdays[d.getDay()]}</small>
+      </div>
+
+      <div class="occ-control">
+        <label>Пара</label>
+        <select onchange="setOccurrenceOverride('${date}','slot',this.value)">
+          ${slotOptionsForOccurrence(o.slot||'')}
+        </select>
+      </div>
+
+      <div class="occ-control">
+        <label>Вид</label>
+        <select onchange="setOccurrenceOverride('${date}','lessonType',this.value)">
+          <option value="">Як у базовому занятті</option>
+          ${lessonTypes.map(t=>`<option ${t===lessonType?'selected':''}>${t}</option>`).join('')}
+        </select>
+        <input id="occ-type-custom-${date}" class="${lessonType==='Інше'?'':'hidden'} occ-custom" type="text" value="${esc(o.lessonTypeCustom||'')}" placeholder="Свій вид" oninput="setOccurrenceOverride('${date}','lessonTypeCustom',this.value)">
+      </div>
+
+      <div class="occ-control">
+        <label>Аудиторія</label>
+        <select onchange="setOccurrenceOverride('${date}','roomChoice',this.value)">
+          <option value="">Як у базовому занятті</option>
+          ${roomOptions.map(r=>`<option ${r===roomChoice?'selected':''}>${r}</option>`).join('')}
+          <option value="Інше" ${roomChoice==='Інше'?'selected':''}>Інше</option>
+        </select>
+        <input id="occ-room-custom-${date}" class="${roomChoice==='Інше'?'':'hidden'} occ-custom" type="text" value="${esc(o.roomCustom||'')}" placeholder="Своя аудиторія" oninput="setOccurrenceOverride('${date}','roomCustom',this.value)">
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function refreshRecurrenceUI(){
+  const mode=document.querySelector('[name="repeatMode"]')?.value||'none';
+  if(mode==='selected')renderManualDatePicker();
+  if(mode!=='none')renderOccurrencePreview();
+}
+
+function buildFlexibleOccurrences(data,mode,repeatUntil){
+  const dates=generatedRecurrenceDates(mode).filter(d=>!recurrenceExcludedDates.has(d));
+  if(!dates.length)return [];
+
+  const seriesId=uid('series');
+
+  return dates.map(date=>{
+    const o=recurrenceOverrides[date]||{};
+    const item={
+      ...data,
+      id:uid('class'),
+      date,
+      seriesId,
+      recurrence:mode,
+      recurrenceUntil:repeatUntil||'',
+      seriesBaseDate:data.date
+    };
+
+    if(o.slot){
+      const [s,e]=o.slot.split('|');
+      item.time=s;
+      item.end=e;
+    }
+
+    if(o.lessonType){
+      item.lessonType=o.lessonType;
+      item.lessonTypeCustom=o.lessonType==='Інше'?(o.lessonTypeCustom||''):'';
+    }
+
+    if(o.roomChoice){
+      item.room=o.roomChoice==='Інше'?(o.roomCustom||''):o.roomChoice;
+    }
+
+    return item;
+  });
 }
 
 function reminderSelect(x={}){
@@ -331,20 +611,6 @@ function checkClassConflicts(candidates,excludeIds=[]){
   return confirm(`Є конфлікт у розкладі:\n\n${unique.join('\n')}${more}\n\nВсе одно зберегти?`);
 }
 
-function buildWeeklyOccurrences(data,untilIso){
-  const start=dateObj(data.date), until=dateObj(untilIso);
-  if(!start || !until || until<start)return [];
-  const seriesId=uid('series');
-  const out=[];
-  const d=new Date(start);
-  let guard=0;
-  while(d<=until && guard<70){
-    out.push({...data,id:uid('class'),date:isoLocal(d),seriesId,recurrence:'weekly',recurrenceUntil:untilIso});
-    d.setDate(d.getDate()+7);
-    guard++;
-  }
-  return out;
-}
 
 function pluralEvents(n){
   if(n%10===1 && n%100!==11) return `${n} подія`;
@@ -862,9 +1128,30 @@ function showForm(type,item={}){
   document.getElementById('entryForm').classList.remove('hidden');
   document.getElementById('entryType').value=type;
   document.getElementById('entryId').value=item.id||'';
+
+  if(type==='class' && !item.id){
+    resetRecurrenceDraft(item.date||isoToday());
+  }
+
   const name={class:'Заняття',task:'Справа',project:'Проєкт',note:'Нотатка'}[type];
   document.getElementById('modalTitle').textContent=(item.id?'Редагувати · ':'Додати · ')+name;
   document.getElementById('formFields').innerHTML=formMarkup(type,item);
+
+  if(type==='class' && !item.id){
+    const form=document.getElementById('entryForm');
+    const watched=new Set(['date','time','end','lessonType','lessonTypeCustom','roomChoice','roomCustom','lessonSlot']);
+    form.querySelectorAll('input,select').forEach(el=>{
+      if(watched.has(el.name)){
+        el.addEventListener('change',()=>{
+          if(el.name==='date'){
+            const d=dateObj(el.value);
+            if(d)recurrencePickerMonth=new Date(d.getFullYear(),d.getMonth(),1);
+          }
+          refreshRecurrenceUI();
+        });
+      }
+    });
+  }
 }
 
 function inputField(name,label,type='text',value='',placeholder='',full=false,required=false){
@@ -923,6 +1210,24 @@ function editEntry(type,id){
 function deleteEntry(type,id){
   const key=type==='class'?'classes':type==='task'?'tasks':type==='project'?'projects':'notes';
   const item=state[key].find(x=>x.id===id);if(!item)return;
+
+  if(type==='class' && item.seriesId){
+    const answer=prompt(
+      `Це заняття входить у серію. Що видалити?\n\n1 — тільки це заняття\n2 — це заняття і всі наступні\n3 — всю серію`,
+      '1'
+    );
+    if(answer===null)return;
+
+    if(answer==='2'){
+      state.classes=state.classes.filter(x=>!(x.seriesId===item.seriesId && x.date>=item.date));
+      save();toast('Видалено це і наступні заняття');return;
+    }
+    if(answer==='3'){
+      state.classes=state.classes.filter(x=>x.seriesId!==item.seriesId);
+      save();toast('Серію видалено');return;
+    }
+  }
+
   if(!confirm(`Видалити «${item.title||item.subject||'цей запис'}»?`))return;
   state[key]=state[key].filter(x=>x.id!==id);save();toast('Видалено');
 }
@@ -932,15 +1237,19 @@ function toggleTask(id){
 }
 function submitEntry(e){
   e.preventDefault();
+
   const type=document.getElementById('entryType').value;
   const id=document.getElementById('entryId').value;
   const data=Object.fromEntries(new FormData(e.target).entries());
 
   const saveAsTemplate=data.saveTemplate==='on';
   const templateName=data.templateName||'';
+  const seriesScope=data.seriesScope||'this';
+
   delete data.saveTemplate;
   delete data.templateName;
   delete data.templateChoice;
+  delete data.seriesScope;
   delete data.lessonSlot;
 
   const repeatMode=data.repeatMode||'none';
@@ -949,7 +1258,7 @@ function submitEntry(e){
   delete data.repeatUntil;
 
   if(type==='class'){
-    if(data.lessonType!=='Інше') data.lessonTypeCustom='';
+    if(data.lessonType!=='Інше')data.lessonTypeCustom='';
     data.room=data.roomChoice==='Інше'?(data.roomCustom||''):data.roomChoice;
     delete data.roomChoice;
     delete data.roomCustom;
@@ -957,6 +1266,7 @@ function submitEntry(e){
   }
 
   const key=type==='class'?'classes':type==='task'?'tasks':type==='project'?'projects':'notes';
+
   if(type==='project')data.progress=Math.max(0,Math.min(100,Number(data.progress)||0));
   if(type==='task'&&!id)data.done=false;
   if(type==='note')data.updated=new Date().toISOString();
@@ -967,37 +1277,75 @@ function submitEntry(e){
       return;
     }
 
+    // EDIT EXISTING LESSON
     if(id){
-      if(!checkClassConflicts([{...data,id}], [id]))return;
-      const i=state.classes.findIndex(x=>x.id===id);
-      if(i<0)return;
-      state.classes[i]={...state.classes[i],...data};
-      if(saveAsTemplate) storeClassTemplate(data,templateName);
-      closeModal();save();toast('Заняття оновлено');
+      const current=state.classes.find(x=>x.id===id);
+      if(!current)return;
+
+      // Ordinary one-off lesson or "only this"
+      if(!current.seriesId || seriesScope==='this'){
+        if(!checkClassConflicts([{...current,...data,id}], [id]))return;
+        const i=state.classes.findIndex(x=>x.id===id);
+        state.classes[i]={...state.classes[i],...data};
+        if(saveAsTemplate)storeClassTemplate(data,templateName);
+        closeModal();save();toast('Заняття оновлено');
+        return;
+      }
+
+      // Update current+future or entire series, preserving each occurrence date/id.
+      const targets=state.classes.filter(x=>
+        x.seriesId===current.seriesId &&
+        (seriesScope==='all' || x.date>=current.date)
+      );
+      const targetIds=targets.map(x=>x.id);
+
+      const common={...data};
+      delete common.date;
+
+      const candidates=targets.map(x=>({...x,...common,date:x.date,id:x.id}));
+      if(!checkClassConflicts(candidates,targetIds))return;
+
+      targets.forEach(target=>{
+        const i=state.classes.findIndex(x=>x.id===target.id);
+        state.classes[i]={...state.classes[i],...common,date:target.date,id:target.id};
+      });
+
+      if(saveAsTemplate)storeClassTemplate(data,templateName);
+      closeModal();save();
+      toast(seriesScope==='all'?'Оновлено всю серію':'Оновлено це і наступні заняття');
       return;
     }
 
-    if(repeatMode==='weekly'){
-      if(!repeatUntil){
-        alert('Для щотижневого заняття вкажіть дату «Повторювати до».');
+    // CREATE SERIES
+    if(repeatMode!=='none'){
+      if(['weekly','biweekly'].includes(repeatMode) && !repeatUntil){
+        alert('Вкажіть дату завершення серії.');
         return;
       }
-      const occurrences=buildWeeklyOccurrences(data,repeatUntil);
+
+      const occurrences=buildFlexibleOccurrences(data,repeatMode,repeatUntil);
+
       if(!occurrences.length){
-        alert('Дата завершення повторення має бути не раніше першого заняття.');
+        alert(repeatMode==='selected'
+          ? 'Оберіть хоча б одну дату для серії.'
+          : 'Не залишилося жодної дати для створення.'
+        );
         return;
       }
+
       if(!checkClassConflicts(occurrences))return;
+
       state.classes.push(...occurrences);
-      if(saveAsTemplate) storeClassTemplate(data,templateName);
+      if(saveAsTemplate)storeClassTemplate(data,templateName);
       closeModal();save();toast(`Створено ${occurrences.length} занять`);
       return;
     }
 
+    // CREATE ONE-OFF LESSON
     const item={...data,id:uid('class')};
     if(!checkClassConflicts([item]))return;
     state.classes.push(item);
-    if(saveAsTemplate) storeClassTemplate(data,templateName);
+    if(saveAsTemplate)storeClassTemplate(data,templateName);
     closeModal();save();toast('Заняття додано');
     return;
   }
@@ -1006,8 +1354,10 @@ function submitEntry(e){
     const i=state[key].findIndex(x=>x.id===id);
     state[key][i]={...state[key][i],...data};
   }else{
-    data.id=uid(type);state[key].push(data);
+    data.id=uid(type);
+    state[key].push(data);
   }
+
   closeModal();save();toast(id?'Оновлено':'Додано');
 }
 
