@@ -1,11 +1,10 @@
-const CACHE='fisher-control-v10';
-const FILES=['./','./index.html','./styles.css?v=10','./script.js?v=10','./manifest.json'];
+const CACHE='fisher-control-v11';
+const FILES=['./','./index.html','./styles.css?v=11','./script.js?v=11','./manifest.json'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)));
 });
-
 self.addEventListener('activate',event=>{
   event.waitUntil(
     caches.keys()
@@ -13,7 +12,6 @@ self.addEventListener('activate',event=>{
       .then(()=>self.clients.claim())
   );
 });
-
 self.addEventListener('fetch',event=>{
   if(event.request.mode==='navigate'){
     event.respondWith(fetch(event.request).catch(()=>caches.match('./index.html')));

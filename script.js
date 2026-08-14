@@ -1,7 +1,7 @@
 
 const KEY='fisher-control-v4';
 
-const seed={classes:[],tasks:[],projects:[],notes:[]};
+const seed={classes:[],tasks:[],projects:[],notes:[],templates:[]};
 const state=load();
 let currentYear=(new Date()).getFullYear();
 let selectedMonthOffset=0;
@@ -102,6 +102,249 @@ function toggleCustomLessonType(value){
 function todayClasses(){return state.classes.filter(x=>x.date===isoToday()).sort((a,b)=>(a.time||'').localeCompare(b.time||''))}
 function openTasks(){return state.tasks.filter(x=>!x.done)}
 function activeProjects(){return state.projects.filter(x=>x.status!=='Завершено')}
+
+function classTemplateSelect(x={}){
+  if(!state.templates.length){
+    return `<div class="field full template-field">
+      <label>Шаблон заняття</label>
+      <div class="template-empty">Шаблонів ще немає. Нижче можна зберегти перший.</div>
+    </div>`;
+  }
+  return `<div class="field full template-field">
+    <label>Шаблон заняття</label>
+    <select name="templateChoice" onchange="applyClassTemplate(this.value)">
+      <option value="">Не використовувати шаблон</option>
+      ${state.templates.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
+function saveTemplateControls(){
+  return `<div class="field full template-save">
+    <label class="checkline">
+      <input type="checkbox" name="saveTemplate" onchange="toggleTemplateName(this.checked)">
+      <span>Зберегти це налаштування як шаблон заняття</span>
+    </label>
+    <input class="hidden" id="templateNameInput" name="templateName" type="text" placeholder="Назва шаблону, наприклад: РЕМС-44 · Режисура">
+  </div>`;
+}
+
+function toggleTemplateName(checked){
+  const el=document.getElementById('templateNameInput');
+  if(el) el.classList.toggle('hidden',!checked);
+}
+
+function applyClassTemplate(id){
+  if(!id)return;
+  const t=state.templates.find(x=>x.id===id);
+  if(!t)return;
+
+  const set=(name,value)=>{
+    const el=document.querySelector(`[name="${name}"]`);
+    if(el) el.value=value??'';
+  };
+
+  set('group',t.group);
+  set('subject',t.subject);
+  set('time',t.time);
+  set('end',t.end);
+  set('location',t.location);
+  set('reminderDays',String(t.reminderDays ?? 1));
+
+  const slot=document.querySelector('[name="lessonSlot"]');
+  if(slot){
+    const exact=lessonSlots.some(([s,e])=>s===t.time && e===t.end);
+    slot.value=exact?`${t.time}|${t.end}`:(t.time?'custom':'');
+  }
+
+  const lt=document.querySelector('[name="lessonType"]');
+  if(lt){
+    lt.value=t.lessonType||'Лекція';
+    toggleCustomLessonType(lt.value);
+  }
+  set('lessonTypeCustom',t.lessonTypeCustom||'');
+
+  const roomChoice=document.querySelector('[name="roomChoice"]');
+  if(roomChoice){
+    if(roomOptions.includes(t.room||'')){
+      roomChoice.value=t.room;
+      toggleCustomRoom(t.room);
+    }else if(t.room){
+      roomChoice.value='Інше';
+      toggleCustomRoom('Інше');
+      set('roomCustom',t.room);
+    }else{
+      roomChoice.value='';
+      toggleCustomRoom('');
+    }
+  }
+}
+
+function storeClassTemplate(data,name){
+  const finalName=(name||`${data.group||'Група'} · ${data.subject||'Заняття'}`).trim();
+  const template={
+    id:uid('tpl'),
+    name:finalName,
+    group:data.group||'',
+    subject:data.subject||'',
+    time:data.time||'',
+    end:data.end||'',
+    lessonType:data.lessonType||'',
+    lessonTypeCustom:data.lessonTypeCustom||'',
+    room:data.room||'',
+    location:data.location||'',
+    reminderDays:Number(data.reminderDays ?? 1)
+  };
+  const same=state.templates.findIndex(t=>t.name.toLowerCase()===finalName.toLowerCase());
+  if(same>=0) state.templates[same]={...state.templates[same],...template,id:state.templates[same].id};
+  else state.templates.push(template);
+}
+
+function deleteClassTemplate(id){
+  const t=state.templates.find(x=>x.id===id);
+  if(!t)return;
+  if(!confirm(`Видалити шаблон «${t.name}»?`))return;
+  state.templates=state.templates.filter(x=>x.id!==id);
+  save();
+  toast('Шаблон видалено');
+}
+
+function classTemplatesBar(){
+  if(!state.templates.length)return '';
+  return `<div class="templates-bar">
+    <span class="templates-label">ШАБЛОНИ:</span>
+    ${state.templates.map(t=>`<span class="template-chip">${esc(t.name)}<button onclick="deleteClassTemplate('${t.id}')" title="Видалити шаблон">×</button></span>`).join('')}
+  </div>`;
+}
+
+function recurrenceFields(x={}){
+  if(x.id)return '';
+  const defaultUntil='';
+  return `<div class="field">
+    <label>Повторення</label>
+    <select name="repeatMode" onchange="toggleRepeatUntil(this.value)">
+      <option value="none">Не повторювати</option>
+      <option value="weekly">Щотижня</option>
+    </select>
+  </div>
+  <div class="field hidden" id="repeatUntilField">
+    <label>Повторювати до</label>
+    <input name="repeatUntil" type="date" value="${defaultUntil}">
+  </div>`;
+}
+function toggleRepeatUntil(value){
+  const el=document.getElementById('repeatUntilField');
+  if(el)el.classList.toggle('hidden',value!=='weekly');
+}
+
+function reminderSelect(x={}){
+  const value=String(x.reminderDays ?? 1);
+  const opts=[
+    ['-1','Не нагадувати'],
+    ['0','У день заняття'],
+    ['1','За 1 день'],
+    ['2','За 2 дні'],
+    ['3','За 3 дні'],
+    ['7','За тиждень']
+  ];
+  return `<div class="field">
+    <label>Нагадати про підготовку</label>
+    <select name="reminderDays">
+      ${opts.map(([v,l])=>`<option value="${v}" ${v===value?'selected':''}>${l}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
+function daysBetween(fromIso,toIso){
+  const a=dateObj(fromIso),b=dateObj(toIso);
+  if(!a||!b)return 9999;
+  return Math.round((b-a)/86400000);
+}
+
+function upcomingPrepClasses(){
+  const today=isoToday();
+  return state.classes
+    .filter(x=>{
+      if(!x.prep || !x.date || x.status==='Скасовано')return false;
+      const reminder=Number(x.reminderDays ?? 1);
+      if(reminder<0)return false;
+      const diff=daysBetween(today,x.date);
+      return diff>=0 && diff<=reminder;
+    })
+    .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+}
+
+function renderPrepReminder(){
+  const items=upcomingPrepClasses();
+  if(!items.length)return '';
+  return `<div class="card prep-reminder-card">
+    <div class="card-head">
+      <div class="card-title"><span class="icon">◎</span>ПІДГОТУВАТИ ДО ЗАНЯТЬ</div>
+      <div class="card-link">${items.length} ${items.length===1?'заняття':'заняття'}</div>
+    </div>
+    <div class="prep-reminder-list">
+      ${items.map(x=>{
+        const diff=daysBetween(isoToday(),x.date);
+        const when=diff===0?'сьогодні':diff===1?'завтра':`через ${diff} дн.`;
+        return `<button class="prep-reminder-row" onclick="openDay('${x.date}')">
+          <div class="prep-reminder-date"><b>${fmtShort(x.date)}</b><small>${when}</small></div>
+          <div class="prep-reminder-main">
+            <b>${esc(x.subject||'Заняття')}</b>
+            <small>${esc([x.group,pairNumber(x.time,x.end),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '))}</small>
+            <div class="prep-reminder-text"><strong>Підготувати:</strong> ${esc(x.prep)}</div>
+          </div>
+        </button>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function timeToMinutes(v){
+  if(!v || !v.includes(':'))return null;
+  const [h,m]=v.split(':').map(Number);
+  return h*60+m;
+}
+function overlaps(aStart,aEnd,bStart,bEnd){
+  const as=timeToMinutes(aStart),ae=timeToMinutes(aEnd),bs=timeToMinutes(bStart),be=timeToMinutes(bEnd);
+  if([as,ae,bs,be].some(v=>v===null))return false;
+  return as<be && bs<ae;
+}
+function classConflict(candidate,excludeIds=[]){
+  return state.classes.filter(x=>
+    !excludeIds.includes(x.id) &&
+    x.status!=='Скасовано' &&
+    x.date===candidate.date &&
+    overlaps(candidate.time,candidate.end,x.time,x.end)
+  );
+}
+function checkClassConflicts(candidates,excludeIds=[]){
+  const found=[];
+  candidates.forEach(c=>{
+    classConflict(c,excludeIds).forEach(x=>found.push({candidate:c,existing:x}));
+  });
+  if(!found.length)return true;
+
+  const unique=found.slice(0,6).map(({candidate,existing})=>
+    `${fmtDate(candidate.date)} ${candidate.time||''}–${candidate.end||''}: ${existing.group||''} · ${existing.subject||'заняття'}`
+  );
+  const more=found.length>6?`\n…і ще ${found.length-6}`:'';
+  return confirm(`Є конфлікт у розкладі:\n\n${unique.join('\n')}${more}\n\nВсе одно зберегти?`);
+}
+
+function buildWeeklyOccurrences(data,untilIso){
+  const start=dateObj(data.date), until=dateObj(untilIso);
+  if(!start || !until || until<start)return [];
+  const seriesId=uid('series');
+  const out=[];
+  const d=new Date(start);
+  let guard=0;
+  while(d<=until && guard<70){
+    out.push({...data,id:uid('class'),date:isoLocal(d),seriesId,recurrence:'weekly',recurrenceUntil:untilIso});
+    d.setDate(d.getDate()+7);
+    guard++;
+  }
+  return out;
+}
 
 function pluralEvents(n){
   if(n%10===1 && n%100!==11) return `${n} подія`;
@@ -421,10 +664,12 @@ function renderHome(){
       </div>
     </div>
 
+    ${renderPrepReminder()}
+
     <div class="card year-card">
       <div class="card-head">
         <div class="card-title"><span class="icon">▤</span>КАЛЕНДАР ПО МІСЯЦЯХ</div>
-        <button class="card-link" onclick="switchView('year')">Відкрити календар окремо →</button>
+        <div class="card-link">Повний місячний огляд</div>
       </div>
       ${renderMonthPlanner()}
     </div>
@@ -508,6 +753,7 @@ function renderWeek(){
 function renderClasses(){
   const items=[...state.classes].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
   document.getElementById('classesView').innerHTML=`
+    ${classTemplatesBar()}
     <div class="page-toolbar">
       <div class="left"><input id="classSearch" placeholder="Пошук за групою, дисципліною, темою або аудиторією…" oninput="filterRows('classesTable',this.value)"></div>
       <button class="gold-btn" onclick="openAdd('class')">＋ Додати заняття</button>
@@ -628,6 +874,7 @@ function textareaField(name,label,value=''){return `<div class="field full"><lab
 function selectField(name,label,opts,value=''){return `<div class="field"><label>${label}</label><select name="${name}">${opts.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`}
 function formMarkup(type,x){
   if(type==='class')return `<div class="form-grid">
+    ${classTemplateSelect(x)}
     ${inputField('group','Група','text',x.group,'РЕМС-44',false,true)}
     ${inputField('subject','Дисципліна','text',x.subject,'Режисура естради і шоу',false,true)}
     ${inputField('date','Дата','date',x.date||isoToday(),'',false,true)}
@@ -637,8 +884,11 @@ function formMarkup(type,x){
     ${lessonTypeSelect(x)}
     ${roomSelect(x)}
     ${inputField('location','Уточнення місця','text',x.location,'КНУКіМ / онлайн')}
-        ${inputField('topic','Тема / що робимо','text',x.topic,'',true)}
+    ${reminderSelect(x)}
+    ${recurrenceFields(x)}
+    ${inputField('topic','Тема / що робимо','text',x.topic,'',true)}
     ${textareaField('prep','Що підготувати',x.prep)}
+    ${saveTemplateControls()}
   </div>`;
   if(type==='task')return `<div class="form-grid">
     ${inputField('title','Що треба зробити?','text',x.title,'',true,true)}
@@ -685,17 +935,73 @@ function submitEntry(e){
   const type=document.getElementById('entryType').value;
   const id=document.getElementById('entryId').value;
   const data=Object.fromEntries(new FormData(e.target).entries());
+
+  const saveAsTemplate=data.saveTemplate==='on';
+  const templateName=data.templateName||'';
+  delete data.saveTemplate;
+  delete data.templateName;
+  delete data.templateChoice;
   delete data.lessonSlot;
+
+  const repeatMode=data.repeatMode||'none';
+  const repeatUntil=data.repeatUntil||'';
+  delete data.repeatMode;
+  delete data.repeatUntil;
+
   if(type==='class'){
     if(data.lessonType!=='Інше') data.lessonTypeCustom='';
     data.room=data.roomChoice==='Інше'?(data.roomCustom||''):data.roomChoice;
     delete data.roomChoice;
     delete data.roomCustom;
+    data.reminderDays=Number(data.reminderDays ?? 1);
   }
+
   const key=type==='class'?'classes':type==='task'?'tasks':type==='project'?'projects':'notes';
   if(type==='project')data.progress=Math.max(0,Math.min(100,Number(data.progress)||0));
   if(type==='task'&&!id)data.done=false;
   if(type==='note')data.updated=new Date().toISOString();
+
+  if(type==='class'){
+    if(!data.time || !data.end){
+      alert('Оберіть пару або вкажіть час початку і завершення.');
+      return;
+    }
+
+    if(id){
+      if(!checkClassConflicts([{...data,id}], [id]))return;
+      const i=state.classes.findIndex(x=>x.id===id);
+      if(i<0)return;
+      state.classes[i]={...state.classes[i],...data};
+      if(saveAsTemplate) storeClassTemplate(data,templateName);
+      closeModal();save();toast('Заняття оновлено');
+      return;
+    }
+
+    if(repeatMode==='weekly'){
+      if(!repeatUntil){
+        alert('Для щотижневого заняття вкажіть дату «Повторювати до».');
+        return;
+      }
+      const occurrences=buildWeeklyOccurrences(data,repeatUntil);
+      if(!occurrences.length){
+        alert('Дата завершення повторення має бути не раніше першого заняття.');
+        return;
+      }
+      if(!checkClassConflicts(occurrences))return;
+      state.classes.push(...occurrences);
+      if(saveAsTemplate) storeClassTemplate(data,templateName);
+      closeModal();save();toast(`Створено ${occurrences.length} занять`);
+      return;
+    }
+
+    const item={...data,id:uid('class')};
+    if(!checkClassConflicts([item]))return;
+    state.classes.push(item);
+    if(saveAsTemplate) storeClassTemplate(data,templateName);
+    closeModal();save();toast('Заняття додано');
+    return;
+  }
+
   if(id){
     const i=state[key].findIndex(x=>x.id===id);
     state[key][i]={...state[key][i],...data};
