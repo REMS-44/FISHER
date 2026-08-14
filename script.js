@@ -142,7 +142,9 @@ function getItemsForDate(iso){
       end:x.end||'',
       title:x.subject||'Заняття',
       sub:[x.group, lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x), x.room&&`ауд. ${x.room}`, x.location].filter(Boolean).join(' · '),
-      note:x.topic||x.prep||'',
+      topic:x.topic||'',
+      prep:x.prep||'',
+      note:'',
       color:typeColor(i)
     })),
     ...state.tasks.filter(x=>!x.done && x.date===iso).map((x,i)=>({
@@ -215,7 +217,8 @@ function renderMonthPlanner(){
         </div>
         <div class="cal-title">${esc(x.subject||'Заняття')}</div>
         <div class="cal-info"><b>${esc(x.group||'—')}</b> · ${esc(lessonTypeLabel(x))} · ${x.room?`ауд. ${esc(x.room)}`:'ауд. —'}</div>
-        ${x.topic?`<div class="cal-note">${esc(x.topic)}</div>`:''}
+        ${x.topic?`<div class="cal-topic">Тема: ${esc(x.topic)}</div>`:''}
+        ${x.prep?`<div class="cal-prep"><b>Підготувати:</b> ${esc(x.prep)}</div>`:''}
       </div>`).join('');
 
     const tasksHtml=dayTasks.map(x=>`
@@ -329,7 +332,10 @@ function renderDayOverlay(){
           <div class="day-record-kind ${x.kind}">${x.kind==='class'?'ЗАНЯТТЯ':x.kind==='task'?'СПРАВА':'ПРОЄКТ'}</div>
           <div class="day-record-main">
             <b>${esc(x.title)}</b>
-            <small>${esc(x.sub||'')}${x.note?`<br>${esc(x.note)}`:''}</small>
+            <small>${esc(x.sub||'')}</small>
+            ${x.topic?`<small class="day-topic">Тема: ${esc(x.topic)}</small>`:''}
+            ${x.prep?`<small class="day-prep"><b>Підготувати:</b> ${esc(x.prep)}</small>`:''}
+            ${x.note?`<small>${esc(x.note)}</small>`:''}
           </div>
           <div class="day-record-actions">
             <button title="Редагувати" onclick="dayEdit('${x.kind}','${x.id}')">✎</button>
@@ -359,7 +365,7 @@ function renderHome(){
   const tClasses=todayClasses();
   const todayTasks=openTasks().filter(x=>x.date===isoToday());
   const timeline=[
-    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),badge:'ЗАНЯТТЯ',color:typeColor(i)})),
+    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),topic:x.topic||'',prep:x.prep||'',badge:'ЗАНЯТТЯ',color:typeColor(i)})),
     ...todayTasks.map((x,i)=>({time:x.time||'—',title:x.title,sub:x.category||'',badge:'СПРАВА',color:typeColor(i+2)}))
   ].sort((a,b)=>(a.time||'').localeCompare(b.time||''));
 
@@ -385,7 +391,12 @@ function renderHome(){
             <div class="today-row">
               <div class="today-time"><b>${esc(x.time)}</b><small>${esc(x.end||'')}</small></div>
               <div class="type-line" style="background:${['#4c8df7','#49af78','#8a72d8','#d99043','#e36565'][i%5]}"></div>
-              <div class="today-main"><b>${esc(x.title)}</b><small>${esc(x.sub)}</small></div>
+              <div class="today-main">
+                <b>${esc(x.title)}</b>
+                <small>${esc(x.sub)}</small>
+                ${x.topic?`<small class="today-topic">Тема: ${esc(x.topic)}</small>`:''}
+                ${x.prep?`<small class="today-prep"><b>Підготувати:</b> ${esc(x.prep)}</small>`:''}
+              </div>
               <span class="badge ${x.color}">${x.badge}</span>
             </div>`).join('')}</div>`:
             `<div class="empty-state">На сьогодні поки нічого не внесено.</div>`}
@@ -503,11 +514,11 @@ function renderClasses(){
     </div>
     <div class="data-card">${items.length?`
       <table class="data-table" id="classesTable">
-        <thead><tr><th>Дата</th><th>Час</th><th>Група</th><th>Дисципліна</th><th>Вид заняття</th><th>Тема</th><th>Місце</th><th>Статус</th><th></th></tr></thead>
-        <tbody>${items.map(x=>`<tr data-search="${esc(`${x.group} ${x.subject} ${x.lessonType||''} ${x.lessonTypeCustom||''} ${x.topic} ${x.room}`.toLowerCase())}">
+        <thead><tr><th>Дата</th><th>Час</th><th>Група</th><th>Дисципліна</th><th>Вид заняття</th><th>Тема</th><th>Що підготувати</th><th>Місце</th><th></th></tr></thead>
+        <tbody>${items.map(x=>`<tr data-search="${esc(`${x.group} ${x.subject} ${x.lessonType||''} ${x.lessonTypeCustom||''} ${x.topic} ${x.prep||''} ${x.room}`.toLowerCase())}">
           <td>${fmtDate(x.date)}</td><td class="blue-text">${esc(x.time||'—')}</td><td>${esc(x.group||'—')}</td>
-          <td><b>${esc(x.subject||'—')}</b></td><td>${esc(lessonTypeLabel(x))}</td><td>${esc(x.topic||'—')}</td><td><b>${esc(x.room||'—')}</b><small>${esc(x.location||'')}</small></td>
-          <td>${esc(x.status||'Заплановано')}</td><td>${actions('class',x.id)}</td>
+          <td><b>${esc(x.subject||'—')}</b></td><td>${esc(lessonTypeLabel(x))}</td><td>${esc(x.topic||'—')}</td><td>${esc(x.prep||'—')}</td><td><b>${esc(x.room||'—')}</b><small>${esc(x.location||'')}</small></td>
+          <td>${actions('class',x.id)}</td>
         </tr>`).join('')}</tbody>
       </table>`:`<div class="empty-state">Занять ще немає.</div>`}</div>`;
 }
@@ -626,8 +637,7 @@ function formMarkup(type,x){
     ${lessonTypeSelect(x)}
     ${roomSelect(x)}
     ${inputField('location','Уточнення місця','text',x.location,'КНУКіМ / онлайн')}
-    ${selectField('status','Статус',['Заплановано','Проведено','Перенесено','Скасовано'],x.status||'Заплановано')}
-    ${inputField('topic','Тема / що робимо','text',x.topic,'',true)}
+        ${inputField('topic','Тема / що робимо','text',x.topic,'',true)}
     ${textareaField('prep','Що підготувати',x.prep)}
   </div>`;
   if(type==='task')return `<div class="form-grid">
@@ -700,7 +710,7 @@ function doSearch(){
   const box=document.getElementById('searchResults');
   if(!q){box.innerHTML='';return}
   const hits=[];
-  state.classes.forEach(x=>{if(`${x.group} ${x.subject} ${x.topic} ${x.room}`.toLowerCase().includes(q))hits.push(['ЗАНЯТТЯ',`${x.group} · ${x.subject}`])});
+  state.classes.forEach(x=>{if(`${x.group} ${x.subject} ${x.topic} ${x.prep||''} ${x.room}`.toLowerCase().includes(q))hits.push(['ЗАНЯТТЯ',`${x.group} · ${x.subject}`])});
   state.tasks.forEach(x=>{if(`${x.title} ${x.category} ${x.project}`.toLowerCase().includes(q))hits.push(['СПРАВА',x.title])});
   state.projects.forEach(x=>{if(`${x.title} ${x.category} ${x.next}`.toLowerCase().includes(q))hits.push(['ПРОЄКТ',x.title])});
   state.notes.forEach(x=>{if(`${x.title} ${x.text}`.toLowerCase().includes(q))hits.push(['НОТАТКА',x.title])});
