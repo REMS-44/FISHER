@@ -22,6 +22,52 @@ function startOfWeek(){const d=new Date(); const wd=d.getDay(); d.setDate(d.getD
 function isoLocal(d){const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10)}
 function priorityClass(p){return p==='Високий'||p==='Критично'?'high':p==='Низький'?'low':'medium'}
 function typeColor(i){return ['blue','green','purple','orange','red'][i%5]}
+const lessonSlots=[
+  ['09:00','10:20'],
+  ['10:40','12:00'],
+  ['12:30','13:50'],
+  ['14:10','15:30'],
+  ['15:40','17:00'],
+  ['17:10','18:30'],
+  ['18:40','20:00']
+];
+const lessonTypes=['Лекція','Практичне','Лабораторне','Семінар','Індивідуальне','Залік','Іспит','Консультація','Репетиція','Контрольна робота','Інше'];
+function slotValue(start,end){return start&&end?`${start}|${end}`:''}
+function lessonTypeLabel(x){return x.lessonType==='Інше'?(x.lessonTypeCustom||'Інше'):(x.lessonType||'—')}
+function lessonSlotSelect(x){
+  const current=slotValue(x.time,x.end);
+  const exact=lessonSlots.some(([s,e])=>slotValue(s,e)===current);
+  return `<div class="field full"><label>Пара / час</label>
+    <select name="lessonSlot" id="lessonSlotSelect" onchange="applyLessonSlot(this.value)">
+      <option value="">Оберіть час заняття</option>
+      ${lessonSlots.map(([s,e],i)=>`<option value="${s}|${e}" ${current===slotValue(s,e)?'selected':''}>${i+1} пара · ${s}–${e}</option>`).join('')}
+      <option value="custom" ${current && !exact?'selected':''}>Інший час</option>
+    </select>
+  </div>`;
+}
+function lessonTypeSelect(x){
+  return `<div class="field"><label>Вид заняття</label>
+    <select name="lessonType" id="lessonTypeSelect" onchange="toggleCustomLessonType(this.value)">
+      ${lessonTypes.map(t=>`<option ${t===(x.lessonType||'')?'selected':''}>${t}</option>`).join('')}
+    </select>
+  </div>
+  <div class="field ${x.lessonType==='Інше'?'':'hidden'}" id="customLessonTypeField">
+    <label>Свій вид заняття</label>
+    <input name="lessonTypeCustom" type="text" value="${esc(x.lessonTypeCustom||'')}" placeholder="Введіть свій варіант">
+  </div>`;
+}
+function applyLessonSlot(value){
+  const start=document.querySelector('[name="time"]');
+  const end=document.querySelector('[name="end"]');
+  if(!start||!end)return;
+  if(value && value!=='custom'){
+    const [s,e]=value.split('|'); start.value=s; end.value=e;
+  }
+}
+function toggleCustomLessonType(value){
+  const f=document.getElementById('customLessonTypeField');
+  if(f) f.classList.toggle('hidden',value!=='Інше');
+}
 function todayClasses(){return state.classes.filter(x=>x.date===isoToday()).sort((a,b)=>(a.time||'').localeCompare(b.time||''))}
 function openTasks(){return state.tasks.filter(x=>!x.done)}
 function activeProjects(){return state.projects.filter(x=>x.status!=='Завершено')}
@@ -45,7 +91,7 @@ function renderHome(){
   const tClasses=todayClasses();
   const todayTasks=openTasks().filter(x=>x.date===isoToday());
   const timeline=[
-    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),badge:'ЗАНЯТТЯ',color:typeColor(i)})),
+    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),badge:'ЗАНЯТТЯ',color:typeColor(i)})),
     ...todayTasks.map((x,i)=>({time:x.time||'—',title:x.title,sub:x.category||'',badge:'СПРАВА',color:typeColor(i+2)}))
   ].sort((a,b)=>(a.time||'').localeCompare(b.time||''));
 
@@ -239,7 +285,7 @@ function renderWeek(){
   for(let i=0;i<7;i++){
     const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoLocal(d);
     const items=[
-      ...state.classes.filter(x=>x.date===iso).map((x,j)=>({kind:'class',color:typeColor(j),time:x.time,title:`${x.group||''} · ${x.subject||'Заняття'}`,sub:x.room?`ауд. ${x.room}`:''})),
+      ...state.classes.filter(x=>x.date===iso).map((x,j)=>({kind:'class',color:typeColor(j),time:x.time,title:`${x.group||''} · ${x.subject||'Заняття'}`,sub:[lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · ')})),
       ...openTasks().filter(x=>x.date===iso).map((x,j)=>({kind:'task',color:typeColor(j+2),time:x.time,title:x.title,sub:x.category||''})),
       ...activeProjects().filter(x=>x.deadline===iso).map((x,j)=>({kind:'project',color:'green',time:'',title:`Дедлайн: ${x.title}`,sub:''}))
     ].sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
@@ -262,10 +308,10 @@ function renderClasses(){
     </div>
     <div class="data-card">${items.length?`
       <table class="data-table" id="classesTable">
-        <thead><tr><th>Дата</th><th>Час</th><th>Група</th><th>Дисципліна</th><th>Тема</th><th>Місце</th><th>Статус</th><th></th></tr></thead>
-        <tbody>${items.map(x=>`<tr data-search="${esc(`${x.group} ${x.subject} ${x.topic} ${x.room}`.toLowerCase())}">
+        <thead><tr><th>Дата</th><th>Час</th><th>Група</th><th>Дисципліна</th><th>Вид заняття</th><th>Тема</th><th>Місце</th><th>Статус</th><th></th></tr></thead>
+        <tbody>${items.map(x=>`<tr data-search="${esc(`${x.group} ${x.subject} ${x.lessonType||''} ${x.lessonTypeCustom||''} ${x.topic} ${x.room}`.toLowerCase())}">
           <td>${fmtDate(x.date)}</td><td class="blue-text">${esc(x.time||'—')}</td><td>${esc(x.group||'—')}</td>
-          <td><b>${esc(x.subject||'—')}</b></td><td>${esc(x.topic||'—')}</td><td><b>${esc(x.room||'—')}</b><small>${esc(x.location||'')}</small></td>
+          <td><b>${esc(x.subject||'—')}</b></td><td>${esc(lessonTypeLabel(x))}</td><td>${esc(x.topic||'—')}</td><td><b>${esc(x.room||'—')}</b><small>${esc(x.location||'')}</small></td>
           <td>${esc(x.status||'Заплановано')}</td><td>${actions('class',x.id)}</td>
         </tr>`).join('')}</tbody>
       </table>`:`<div class="empty-state">Занять ще немає.</div>`}</div>`;
@@ -379,8 +425,10 @@ function formMarkup(type,x){
     ${inputField('group','Група','text',x.group,'РЕМС-44',false,true)}
     ${inputField('subject','Дисципліна','text',x.subject,'Режисура естради і шоу',false,true)}
     ${inputField('date','Дата','date',x.date||isoToday(),'',false,true)}
+    ${lessonSlotSelect(x)}
     ${inputField('time','Час початку','time',x.time)}
     ${inputField('end','Час завершення','time',x.end)}
+    ${lessonTypeSelect(x)}
     ${inputField('room','Аудиторія / місце','text',x.room,'324')}
     ${inputField('location','Уточнення місця','text',x.location,'КНУКіМ / онлайн')}
     ${selectField('status','Статус',['Заплановано','Проведено','Перенесено','Скасовано'],x.status||'Заплановано')}
@@ -432,6 +480,8 @@ function submitEntry(e){
   const type=document.getElementById('entryType').value;
   const id=document.getElementById('entryId').value;
   const data=Object.fromEntries(new FormData(e.target).entries());
+  delete data.lessonSlot;
+  if(type==='class' && data.lessonType!=='Інше') data.lessonTypeCustom='';
   const key=type==='class'?'classes':type==='task'?'tasks':type==='project'?'projects':'notes';
   if(type==='project')data.progress=Math.max(0,Math.min(100,Number(data.progress)||0));
   if(type==='task'&&!id)data.done=false;
