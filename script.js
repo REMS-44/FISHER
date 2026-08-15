@@ -301,30 +301,64 @@ function groupStyle(group=''){
   return `--group-bg:${c.bg};--group-border:${c.border};--group-soft:${c.soft};--group-text:${c.text}`;
 }
 
-function currentSemesterGroups(){
+const disciplineColorPalette=[
+  {bg:'#eef5ff',border:'#4c8df7',soft:'#dbe9ff',text:'#2f66b1'},
+  {bg:'#eef8f2',border:'#49af78',soft:'#dcefe4',text:'#347f58'},
+  {bg:'#f4f0ff',border:'#8a72d8',soft:'#e6defb',text:'#6651b0'},
+  {bg:'#fff4e8',border:'#d99043',soft:'#f8e3cb',text:'#9b632d'},
+  {bg:'#fff0f0',border:'#d96969',soft:'#f7dcdc',text:'#9e4949'},
+  {bg:'#edf8f8',border:'#4aa6a6',soft:'#d7ecec',text:'#357a7a'},
+  {bg:'#fff2f7',border:'#c76c99',soft:'#f2dce7',text:'#925070'},
+  {bg:'#f5f5e9',border:'#9d9c50',soft:'#e8e7cf',text:'#747337'},
+  {bg:'#eef7f7',border:'#5b8fa8',soft:'#dcecf1',text:'#406b80'},
+  {bg:'#f8f1ea',border:'#b58254',soft:'#eadbca',text:'#8b633e'}
+];
+
+function disciplineColor(subject='',group=''){
+  const key=`${(subject||'Без дисципліни').trim().toUpperCase()} :: ${(group||'Без групи').trim().toUpperCase()}`;
+  return disciplineColorPalette[stringHash(key)%disciplineColorPalette.length];
+}
+
+function disciplineStyle(subject='',group=''){
+  const c=disciplineColor(subject,group);
+  return `--group-bg:${c.bg};--group-border:${c.border};--group-soft:${c.soft};--group-text:${c.text};--discipline-bg:${c.bg};--discipline-border:${c.border};--discipline-soft:${c.soft};--discipline-text:${c.text}`;
+}
+
+function disciplinePairLabel(subject='',group=''){
+  const s=(subject||'Без дисципліни').trim();
+  const g=(group||'Без групи').trim();
+  return `${s} · ${g}`;
+}
+
+function currentSemesterDisciplines(){
   const base=monthCursor(selectedMonthOffset);
   const monthStart=`${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,'0')}-01`;
   const endDate=new Date(base.getFullYear(),base.getMonth()+1,0);
   const monthEnd=isoLocal(endDate);
-  return [...new Set(
-    state.classes
-      .filter(x=>x.date>=monthStart && x.date<=monthEnd && x.status!=='Скасовано')
-      .map(x=>(x.group||'Без групи').trim())
-      .filter(Boolean)
-  )].sort((a,b)=>a.localeCompare(b,'uk'));
+  const seen=new Map();
+  state.classes
+    .filter(x=>x.date>=monthStart && x.date<=monthEnd && x.status!=='Скасовано')
+    .forEach(x=>{
+      const subject=(x.subject||'Без дисципліни').trim();
+      const group=(x.group||'Без групи').trim();
+      const key=`${subject}::${group}`;
+      if(!seen.has(key))seen.set(key,{subject,group,label:disciplinePairLabel(subject,group)});
+    });
+  return [...seen.values()].sort((a,b)=>a.label.localeCompare(b.label,'uk'));
 }
 
 function renderGroupLegend(){
-  const groups=currentSemesterGroups();
-  if(!groups.length)return '';
+  const disciplines=currentSemesterDisciplines();
+  if(!disciplines.length)return '';
   return `<div class="group-legend">
-    <span class="group-legend-title">ГРУПИ:</span>
-    ${groups.map(g=>{
-      const c=groupColor(g);
-      return `<span class="group-legend-item"><i style="background:${c.border}"></i>${esc(g)}</span>`;
+    <span class="group-legend-title">ДИСЦИПЛІНИ / ГРУПИ:</span>
+    ${disciplines.map(item=>{
+      const c=disciplineColor(item.subject,item.group);
+      return `<span class="group-legend-item"><i style="background:${c.border}"></i>${esc(item.label)}</span>`;
     }).join('')}
   </div>`;
 }
+
 
 function lessonTemporalLabel(x){
   if(x.date<isoToday())return ['Минуло','past'];
@@ -1568,7 +1602,9 @@ function getItemsForDate(iso){
       topic:x.topic||'',
       prep:x.prep||'',
       note:'',
-      color:typeColor(i)
+      color:typeColor(i),
+      style:disciplineStyle(x.subject||'',x.group||''),
+      accent:disciplineColor(x.subject||'',x.group||'').border
     })),
     ...state.tasks.filter(x=>!x.done && x.date===iso).map((x,i)=>({
       kind:'task',
@@ -1633,7 +1669,7 @@ function renderMonthPlanner(){
     if(total) cls.push('has-items');
 
     const classesHtml=dayClasses.map(x=>`
-      <div class="cal-entry cal-class" style="${groupStyle(x.group)}">
+      <div class="cal-entry cal-class" style="${disciplineStyle(x.subject,x.group||'')}">
         <div class="cal-entry-line">
           <span class="cal-pair">${esc(pairNumber(x.time,x.end))}</span>
           <span class="cal-time">${esc(x.time||'—')}${x.end?`–${esc(x.end)}`:''}</span>
@@ -1751,9 +1787,9 @@ function renderDayOverlay(){
       </div>
 
       ${items.length?`<div class="day-records">${items.map(x=>`
-        <div class="day-record">
+        <div class="day-record ${x.kind==='class'?'discipline-record':''}" ${x.kind==='class'&&x.style?`style="${x.style}"`:''}>
           <div class="day-record-time">${esc(x.time)}${x.end?`<small>до ${esc(x.end)}</small>`:''}</div>
-          <div class="day-record-kind ${x.kind}">${x.kind==='class'?'ЗАНЯТТЯ':x.kind==='task'?'СПРАВА':'ПРОЄКТ'}</div>
+          <div class="day-record-kind ${x.kind} ${x.kind==='class'?'discipline-kind':''}" ${x.kind==='class'&&x.style?`style="${x.style}"`:''}>${x.kind==='class'?'ЗАНЯТТЯ':x.kind==='task'?'СПРАВА':'ПРОЄКТ'}</div>
           <div class="day-record-main">
             <b>${esc(x.title)}</b>
             <small>${esc(x.sub||'')}</small>
@@ -1826,13 +1862,13 @@ function renderHome(){
   const tClasses=todayClasses();
   const todayTasks=openTasks().filter(x=>x.date===isoToday());
   const timeline=[
-    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),topic:x.topic||'',prep:x.prep||'',badge:'ЗАНЯТТЯ',color:typeColor(i),group:x.group||''})),
+    ...tClasses.map((x,i)=>({time:x.time||'—',end:x.end||'',title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),topic:x.topic||'',prep:x.prep||'',badge:'ЗАНЯТТЯ',color:typeColor(i),group:x.group||'',style:disciplineStyle(x.subject||'',x.group||''),accent:disciplineColor(x.subject||'',x.group||'').border})),
     ...todayTasks.map((x,i)=>({time:x.time||'—',title:x.title,sub:x.category||'',badge:'СПРАВА',color:typeColor(i+2)}))
   ].sort((a,b)=>(a.time||'').localeCompare(b.time||''));
 
   const upcoming=[
     ...openTasks().filter(x=>x.date && x.date>=isoToday()).map(x=>({date:x.date,title:x.title,sub:x.category||'',time:x.time||''})),
-    ...state.classes.filter(x=>x.date>isoToday()).map(x=>({date:x.date,title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x)].filter(Boolean).join(' · '),time:x.time||''}))
+    ...state.classes.filter(x=>x.date>isoToday()).map(x=>({date:x.date,title:x.subject||'Заняття',sub:[x.group,lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x)].filter(Boolean).join(' · '),time:x.time||'',style:disciplineStyle(x.subject||'',x.group||'')}))
   ].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,6);
 
 
@@ -1845,16 +1881,16 @@ function renderHome(){
         </div>
         <div class="card-body">
           ${timeline.length?`<div class="today-list">${timeline.map((x,i)=>`
-            <div class="today-row">
+            <div class="today-row" ${x.style?`style="${x.style}"`:''}>
               <div class="today-time"><b>${esc(x.time)}</b><small>${esc(x.end||'')}</small></div>
-              <div class="type-line" style="background:${x.group?groupColor(x.group).border:['#4c8df7','#49af78','#8a72d8','#d99043','#e36565'][i%5]}"></div>
+              <div class="type-line" style="background:${x.subject?disciplineColor(x.subject,x.group||'').border:['#4c8df7','#49af78','#8a72d8','#d99043','#e36565'][i%5]}"></div>
               <div class="today-main">
                 <b>${esc(x.title)}</b>
                 <small>${esc(x.sub)}</small>
                 ${x.topic?`<small class="today-topic">Тема: ${esc(x.topic)}</small>`:''}
                 ${x.prep?`<small class="today-prep"><b>Підготувати:</b> ${esc(x.prep)}</small>`:''}
               </div>
-              <span class="badge ${x.color}">${x.badge}</span>
+              <span class="badge ${x.badge==='ЗАНЯТТЯ'?'discipline-badge':x.color}" ${x.badge==='ЗАНЯТТЯ'&&x.style?`style="${x.style}"`:''}>${x.badge}</span>
             </div>`).join('')}</div>`:
             `<div class="empty-state">На сьогодні поки нічого не внесено.</div>`}
         </div>
@@ -1868,7 +1904,7 @@ function renderHome(){
         <div class="card-body">
           ${upcoming.length?`<div class="upcoming-list">${upcoming.map(x=>{
             const d=dateObj(x.date);
-            return `<div class="upcoming-row">
+            return `<div class="upcoming-row" ${x.style?`style="${x.style}"`:''}>
               <div class="date-box"><div><b>${d.getDate()}</b><small>${months[d.getMonth()].slice(0,4)}</small></div></div>
               <div class="upcoming-main"><b>${esc(x.title)}</b><small>${esc(x.sub)}</small></div>
               <div class="upcoming-time">${esc(x.time)}</div>
@@ -1909,14 +1945,14 @@ function renderWeek(){
   for(let i=0;i<7;i++){
     const d=new Date(start);d.setDate(start.getDate()+i);const iso=isoLocal(d);
     const items=[
-      ...state.classes.filter(x=>x.date===iso).map((x,j)=>({kind:'class',color:typeColor(j),time:x.time,title:`${x.group||''} · ${x.subject||'Заняття'}`,sub:[lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · ')})),
+      ...state.classes.filter(x=>x.date===iso).map((x,j)=>({kind:'class',color:typeColor(j),time:x.time,title:`${x.group||''} · ${x.subject||'Заняття'}`,sub:[lessonTypeLabel(x)!=='—'&&lessonTypeLabel(x),x.room&&`ауд. ${x.room}`].filter(Boolean).join(' · '),style:disciplineStyle(x.subject||'',x.group||'')})),
       ...openTasks().filter(x=>x.date===iso).map((x,j)=>({kind:'task',color:typeColor(j+2),time:x.time,title:x.title,sub:x.category||''})),
       ...activeProjects().filter(x=>x.deadline===iso).map((x,j)=>({kind:'project',color:'green',time:'',title:`Дедлайн: ${x.title}`,sub:''}))
     ].sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
     html+=`<div class="week-col">
       <div class="week-col-head ${iso===isoToday()?'today':''}"><b>${['Понеділок','Вівторок','Середа','Четвер','Пʼятниця','Субота','Неділя'][i]}</b><small>${d.getDate()} ${months[d.getMonth()]}</small></div>
       <div class="week-col-body">
-        ${items.length?items.map(x=>`<div class="full-event ${x.color}">${x.time?`<b>${esc(x.time)}</b>`:''}${esc(x.title)}<br><small>${esc(x.sub)}</small></div>`).join(''):`<div class="empty-state" style="padding:25px 5px">—</div>`}
+        ${items.length?items.map(x=>`<div class="full-event ${x.kind==='class'?'discipline-event':x.color}" ${x.kind==='class'&&x.style?`style="${x.style}"`:''}>${x.time?`<b>${esc(x.time)}</b>`:''}${esc(x.title)}<br><small>${esc(x.sub)}</small></div>`).join(''):`<div class="empty-state" style="padding:25px 5px">—</div>`}
       </div>
     </div>`;
   }
@@ -1936,7 +1972,7 @@ function renderClasses(){
         <thead><tr><th>Дата</th><th>Час</th><th>Група</th><th>Дисципліна</th><th>Вид заняття</th><th>Тема</th><th>Що підготувати</th><th>Місце</th><th></th></tr></thead>
         <tbody>${items.map(x=>`<tr data-search="${esc(`${x.group} ${x.subject} ${x.lessonType||''} ${x.lessonTypeCustom||''} ${x.topic} ${x.prep||''} ${x.room}`.toLowerCase())}">
           <td>${fmtDate(x.date)}</td><td class="blue-text">${esc(x.time||'—')}</td><td>${esc(x.group||'—')}</td>
-          <td><b>${esc(x.subject||'—')}</b></td><td>${esc(lessonTypeLabel(x))}</td><td>${esc(x.topic||'—')}</td><td>${esc(x.prep||'—')}</td><td><b>${esc(x.room||'—')}</b><small>${esc(x.location||'')}</small></td>
+          <td><span class="discipline-chip" style="${disciplineStyle(x.subject||'',x.group||'')}" title="Колір пари дисципліна + група"><i></i>${esc(x.subject||'—')}</span><small>${esc(x.group||'—')}</small></td><td>${esc(lessonTypeLabel(x))}</td><td>${esc(x.topic||'—')}</td><td>${esc(x.prep||'—')}</td><td><b>${esc(x.room||'—')}</b><small>${esc(x.location||'')}</small></td>
           <td>${actions('class',x.id)}</td>
         </tr>`).join('')}</tbody>
       </table>`:`<div class="empty-state">Занять ще немає.</div>`}</div>`;
@@ -2079,7 +2115,7 @@ function renderDisciplines(){
         <div class="discipline-plan">
           ${s.items.length?s.items.map((x,i)=>{
             const [label,cls]=lessonTemporalLabel(x);
-            return `<div class="discipline-lesson ${cls}" style="${groupStyle(x.group)}">
+            return `<div class="discipline-lesson ${cls}" style="${disciplineStyle(x.subject,x.group||'')}">
               <div class="discipline-lesson-num">${i+1}</div>
               <div class="discipline-lesson-date">
                 <b>${fmtDate(x.date)}</b>
@@ -2151,9 +2187,9 @@ function renderDisciplines(){
             ?Math.min(100,Math.round(s.scheduledScheduleHours/s.plannedScheduleHours*100))
             :100;
 
-          return `<button class="discipline-card plan-card ${s.status}" onclick="openDiscipline('${encodeURIComponent(p.id)}')">
+          return `<button class="discipline-card discipline-colored plan-card ${s.status}" style="${disciplineStyle(p.subject,p.group||'')}" onclick="openDiscipline('${encodeURIComponent(p.id)}')">
             <div class="discipline-card-top">
-              <span>${esc(p.group)}</span>
+              <span style="${disciplineStyle(p.subject,p.group||'')}">${esc(p.group)}</span>
               <b class="plan-status-pill ${s.status}">${planStatusLabel(s)}</b>
             </div>
             <h3>${esc(p.subject)}</h3>

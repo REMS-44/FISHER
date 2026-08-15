@@ -1,5 +1,5 @@
-const CACHE='fisher-control-v22';
-const FILES=['./','./index.html','./styles.css?v=22','./script.js?v=22','./manifest.json'];
+const CACHE='fisher-control-v24';
+const FILES=['./','./index.html','./styles.css?v=24','./script.js?v=24','./manifest.json'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();

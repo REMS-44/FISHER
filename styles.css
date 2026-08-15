@@ -2620,3 +2620,73 @@ button{cursor:pointer}
   .nonpair-row{grid-template-columns:1fr 75px}
   .nonpair-dates{grid-column:1/-1}
 }
+
+
+/* ==========================================================
+   v23 — DISCIPLINE COLORS
+   ========================================================== */
+.badge.discipline-badge{
+  background:var(--discipline-bg,var(--group-bg,#edf5ff));
+  color:var(--discipline-text,var(--group-text,#3978d8));
+  border:1px solid var(--discipline-soft,var(--group-soft,#d4e5fb));
+}
+
+.full-event.discipline-event{
+  background:var(--discipline-bg,var(--group-bg,#edf5ff));
+  border:1px solid var(--discipline-soft,var(--group-soft,#d4e5fb));
+  border-left:3px solid var(--discipline-border,var(--group-border,#4c8df7));
+}
+.full-event.discipline-event b{color:var(--discipline-text,var(--group-text,#2f66b1))}
+
+.discipline-record{
+  border-color:var(--discipline-soft,var(--group-soft,#d4e5fb));
+  box-shadow:inset 3px 0 0 var(--discipline-border,var(--group-border,#4c8df7));
+}
+.day-record-kind.discipline-kind{
+  background:var(--discipline-bg,var(--group-bg,#edf5ff));
+  color:var(--discipline-text,var(--group-text,#3973c8));
+  border:1px solid var(--discipline-soft,var(--group-soft,#d4e5fb));
+}
+
+.discipline-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:6px 10px;
+  border-radius:999px;
+  background:var(--discipline-bg,var(--group-bg,#edf5ff));
+  color:var(--discipline-text,var(--group-text,#2f66b1));
+  border:1px solid var(--discipline-soft,var(--group-soft,#d4e5fb));
+  font-weight:800;
+  line-height:1.2;
+}
+.discipline-chip i{
+  width:8px;height:8px;border-radius:50%;
+  display:inline-block;
+  background:var(--discipline-border,var(--group-border,#4c8df7));
+}
+
+.discipline-colored{
+  border-color:var(--discipline-soft,var(--group-soft,#d4e5fb));
+  box-shadow:0 7px 20px rgba(35,44,58,.035), inset 4px 0 0 var(--discipline-border,var(--group-border,#4c8df7));
+}
+.discipline-colored:hover{
+  border-color:var(--discipline-border,var(--group-border,#4c8df7));
+}
+.discipline-colored .discipline-card-top span{
+  background:var(--discipline-bg,var(--group-bg,#eef3f9));
+  color:var(--discipline-text,var(--group-text,#45617e));
+  border:1px solid var(--discipline-soft,var(--group-soft,#d4e5fb));
+}
+.discipline-colored .discipline-card-progress span,
+.discipline-colored .discipline-progress-track span{
+  background:var(--discipline-border,var(--group-border,#d9a441));
+}
+.discipline-colored h3{color:var(--discipline-text,var(--group-text,#2d4158))}
+
+.upcoming-row .date-box{
+  background:var(--discipline-bg,#f3f5f8);
+  border:1px solid var(--discipline-soft,#edf0f4);
+}
+.upcoming-row .date-box b{color:var(--discipline-text,#24384f)}
+.today-row .today-main b{color:var(--discipline-text,#24384f)}
